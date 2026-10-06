@@ -15,6 +15,7 @@ import { COLUMN_ORDER_LABEL, decodeText, parsePointText, type ColumnOrder } from
 import { buildDxf, pointsCsv, gridCsv, curveCsv, stakeCsv, volumeCsv, type DxfLayersOpt } from '../io/exports';
 import { Card, NumField, TextField, Check, Btn, Kpi, Note, download, pickFile, stamp, safeName } from './common';
 import type { Tool, Layers } from './PlanView';
+import { RoadwayCard, AdvancedCard, UnitsCard } from './design-ui';
 
 export interface PanelCtx {
   p: Project;
@@ -308,21 +309,22 @@ export function AlignmentPanel(c: PanelCtx) {
         </label>
         <p className="hint">整樁單距慣例：公路 20 m、灌溉 25 m、水利 50 m。</p>
       </Card>
+      <RoadwayCard p={p} d={d} />
       {d.alignment && (
         <Card title="曲線資料" extra={<span className="badge">全長 {d.alignment.length.toFixed(3)} m</span>}>
           {d.alignment.warnings.map((w, i) => <Note key={i} tone="warn">{w}</Note>)}
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>IP</th><th>偏角 Δ</th><th>R</th><th>T</th><th>L</th><th>E</th><th>BC</th><th>EC</th></tr></thead>
+              <thead><tr><th>IP</th><th>偏角 Δ</th><th>R</th><th>Ls</th><th>T</th><th>L</th><th>E</th><th>起點</th><th>終點</th></tr></thead>
               <tbody>
                 {d.alignment.curves.map(cv => (
                   <tr key={cv.ipIndex}>
                     <td>{cv.name}</td><td>{cv.delta >= 0 ? '右' : '左'} {degToDmsText(Math.abs(cv.delta) / DEG)}</td>
-                    <td>{cv.R.toFixed(3)}</td><td>{cv.T.toFixed(3)}</td><td>{cv.L.toFixed(3)}</td><td>{cv.E.toFixed(3)}</td>
-                    <td>{formatStation(cv.staBC)}</td><td>{formatStation(cv.staEC)}</td>
+                    <td>{cv.R.toFixed(3)}</td><td>{cv.ls ? cv.ls.toFixed(2) : '—'}</td><td>{cv.T.toFixed(3)}</td><td>{cv.L.toFixed(3)}</td><td>{cv.E.toFixed(3)}</td>
+                    <td>{cv.ls ? 'TS ' : 'BC '}{formatStation(cv.staTS)}</td><td>{cv.ls ? 'ST ' : 'EC '}{formatStation(cv.staST)}</td>
                   </tr>
                 ))}
-                {!d.alignment.curves.length && <tr><td colSpan={8}>沒有曲線（各 IP 未設曲線要素）</td></tr>}
+                {!d.alignment.curves.length && <tr><td colSpan={9}>沒有曲線（各 IP 未設曲線要素）</td></tr>}
               </tbody>
             </table>
           </div>
@@ -388,7 +390,7 @@ function CoordTable({ ips, onChange }: { ips: IPInput[]; onChange(ips: IPInput[]
     <>
       <div className="table-wrap">
         <table className="tbl edit">
-          <thead><tr><th>點名</th><th>E (X)</th><th>N (Y)</th><th>曲線要素</th><th>數值</th><th /></tr></thead>
+          <thead><tr><th>點名</th><th>E (X)</th><th>N (Y)</th><th>曲線要素</th><th>數值</th><th>緩和 Ls</th><th /></tr></thead>
           <tbody>
             {ips.map((q, i) => (
               <tr key={i}>
@@ -396,15 +398,16 @@ function CoordTable({ ips, onChange }: { ips: IPInput[]; onChange(ips: IPInput[]
                 <td><CellNum value={q.x} digits={3} onChange={v => set(i, { x: v })} /></td>
                 <td><CellNum value={q.y} digits={3} onChange={v => set(i, { y: v })} /></td>
                 <CurveCell curve={q.curve} disabled={i === 0 || i === ips.length - 1} onChange={cv => set(i, { curve: cv })} />
+                <td>{i === 0 || i === ips.length - 1 || !q.curve ? <span className="muted">—</span> : <CellNum value={q.ls ?? 0} onChange={v => set(i, { ls: v > 0 ? v : 0 })} />}</td>
                 <td><button type="button" className="x" aria-label="刪除此列" onClick={() => onChange(ips.filter((_, k) => k !== i))}>×</button></td>
               </tr>
             ))}
-            {!ips.length && <tr><td colSpan={6}>尚無資料，按「新增一列」開始輸入 BP。</td></tr>}
+            {!ips.length && <tr><td colSpan={7}>尚無資料，按「新增一列」開始輸入 BP。</td></tr>}
           </tbody>
         </table>
       </div>
       <Btn onClick={add}>新增一列</Btn>
-      <p className="hint">第一列為起點 BP、最後一列為終點 EP。曲線要素給 R、T、L、E 其中一項即可，其餘自動計算。</p>
+      <p className="hint">第一列為起點 BP、最後一列為終點 EP。曲線要素給 R、T、L、E 其中一項即可，其餘自動計算。填緩和曲線長 Ls 會在圓曲線兩側加對稱的克羅梭曲線（樁號為 TS、SC、CS、ST）。</p>
     </>
   );
 }
@@ -453,7 +456,7 @@ function DeflTable({ ips, onApply }: { ips: IPInput[]; onApply(ips: IPInput[]): 
       </div>
       <div className="btn-grid">
         <Btn onClick={() => { const r = [...rows]; r.splice(Math.max(1, r.length - 1), 0, { name: `IP${r.length - 1}`, angle: '0', dist: 0, curve: { kind: 'R', value: 50 } }); setRows(r); }}>插入 IP</Btn>
-        <Btn kind="primary" onClick={() => onApply(deflectionToIPs(bp, rows))}>計算並套用</Btn>
+        <Btn kind="primary" onClick={() => onApply(deflectionToIPs(bp, rows).map(q => ({ ...q, ls: ips.find(o => o.name === q.name)?.ls })))}>計算並套用</Btn>
       </div>
       <p className="hint">角度用 ddd.mmss 寫法（13.0257 = 13°02′57″）。BP 列填 BP→IP1 的方位角；各 IP 列填偏角，右偏為正、左偏為負。</p>
     </>
@@ -550,20 +553,23 @@ export function SectionPanel(c: PanelCtx) {
   const go = (k: number) => { const s = d.sections[k]; if (s) setSelectedSta(s.stake.sta); };
   return (
     <>
-      <Card title="標準斷面">
+      <AdvancedCard p={p} d={d} />
+      <Card title={p.advanced.enabled ? '路面與邊坡' : '標準斷面'}>
         <div className="two">
           <NumField id="t-wl" label="左路面寬" value={t.widthL} unit="m" min={0} onChange={v => setT('widthL', v)} />
           <NumField id="t-wr" label="右路面寬" value={t.widthR} unit="m" min={0} onChange={v => setT('widthR', v)} />
         </div>
-        <NumField id="t-cf" label="路拱橫坡（向外下降）" value={t.crossfall} unit="%" onChange={v => setT('crossfall', v)} />
+        <NumField id="t-cf" label={p.roadway.enabled ? '路拱（由超高設定控制）' : '路拱橫坡（向外下降）'} value={t.crossfall} unit="%" onChange={v => setT('crossfall', v)} disabled={p.roadway.enabled} />
         <div className="two">
           <NumField id="t-cut" label="挖方邊坡 1 :" value={t.cutSlope} min={0.01} onChange={v => setT('cutSlope', v)} />
           <NumField id="t-fill" label="填方邊坡 1 :" value={t.fillSlope} min={0.01} onChange={v => setT('fillSlope', v)} />
         </div>
-        <div className="two">
-          <NumField id="t-dw" label="側溝寬（挖方側）" value={t.ditchWidth} unit="m" min={0} onChange={v => setT('ditchWidth', v)} />
-          <NumField id="t-dd" label="側溝深" value={t.ditchDepth} unit="m" min={0} onChange={v => setT('ditchDepth', v)} />
-        </div>
+        {!p.advanced.enabled && (
+          <div className="two">
+            <NumField id="t-dw" label="側溝寬（挖方側）" value={t.ditchWidth} unit="m" min={0} onChange={v => setT('ditchWidth', v)} />
+            <NumField id="t-dd" label="側溝深" value={t.ditchDepth} unit="m" min={0} onChange={v => setT('ditchDepth', v)} />
+          </div>
+        )}
         <div className="two">
           <NumField id="s-hw" label="橫斷取樣半寬" value={p.sectionSample.halfWidth} unit="m" min={1} onChange={v => patch('sectionSample', { ...p.sectionSample, halfWidth: v })} />
           <NumField id="s-st" label="取樣間距" value={p.sectionSample.step} unit="m" min={0.1} onChange={v => patch('sectionSample', { ...p.sectionSample, step: v })} />
@@ -594,6 +600,7 @@ export function SectionPanel(c: PanelCtx) {
           <Btn onClick={() => download(`${safeName(p.info.name)}_土石方數量計算表_${stamp()}.csv`, volumeCsv(p, d), 'text/csv;charset=utf-8')}>土石方數量計算表 CSV</Btn>
         </Card>
       )}
+      {p.advanced.enabled && <UnitsCard />}
     </>
   );
 }

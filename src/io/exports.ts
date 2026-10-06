@@ -111,19 +111,22 @@ export function gridCsv(p: Project, g: GridResult) {
 export function curveCsv(p: Project, d: Derived) {
   const al = d.alignment;
   if (!al) return toCsv([['尚未建立中心線']]);
-  const rows: Array<Array<string | number>> = [...head(p), ['平曲線資料表', al.input.name], [], ['IP', 'E', 'N', '偏角 Δ', 'R', 'T', 'L', 'E(外矢距)', 'M(中矢距)', 'BC 樁號', 'MC 樁號', 'EC 樁號']];
+  const rows: Array<Array<string | number>> = [...head(p), ['平曲線資料表', al.input.name], [], ['IP', 'E', 'N', '偏角 Δ', 'R', '緩和曲線 Ls', 'T', 'L', 'E(外矢距)', 'M(中矢距)', 'TS/BC 樁號', 'SC 樁號', 'MC 樁號', 'CS 樁號', 'ST/EC 樁號']];
   for (const ip of al.input.ips) {
     const c = al.curves.find(k => al.input.ips[k.ipIndex] === ip);
-    rows.push([ip.name, ip.x.toFixed(3), ip.y.toFixed(3), c ? `${c.delta >= 0 ? '右' : '左'} ${degToDmsText(Math.abs(c.delta) / DEG)}` : '', c ? c.R.toFixed(3) : '', c ? c.T.toFixed(3) : '', c ? c.L.toFixed(3) : '', c ? c.E.toFixed(3) : '', c ? c.M.toFixed(3) : '', c ? formatStation(c.staBC) : '', c ? formatStation(c.staMC) : '', c ? formatStation(c.staEC) : '']);
+    rows.push([ip.name, ip.x.toFixed(3), ip.y.toFixed(3), c ? `${c.delta >= 0 ? '右' : '左'} ${degToDmsText(Math.abs(c.delta) / DEG)}` : '', c ? c.R.toFixed(3) : '', c && c.ls ? c.ls.toFixed(3) : '', c ? c.T.toFixed(3) : '', c ? c.L.toFixed(3) : '', c ? c.E.toFixed(3) : '', c ? c.M.toFixed(3) : '', c ? formatStation(c.staTS) : '', c && c.ls ? formatStation(c.staBC) : '', c ? formatStation(c.staMC) : '', c && c.ls ? formatStation(c.staEC) : '', c ? formatStation(c.staST) : '']);
   }
   rows.push([], [`中心線全長 ${al.length.toFixed(3)} m`, `${formatStation(al.startStation)} ~ ${formatStation(al.endStation)}`]);
   return toCsv(rows);
 }
 
 export function stakeCsv(p: Project, d: Derived) {
-  const rows: Array<Array<string | number>> = [...head(p), ['樁號座標及縱斷面資料表'], [], ['樁號', '點名', 'E', 'N', '方位角', '地面高', '設計高', '挖填高(+挖/−填)']];
+  const rw = d.roadway;
+  const rows: Array<Array<string | number>> = [...head(p), ['樁號座標及縱斷面資料表'], [], ['樁號', '點名', 'E', 'N', '方位角', '地面高', '設計高', '挖填高(+挖/−填)', ...(rw ? ['左橫坡%', '右橫坡%', '左加寬', '右加寬'] : [])]];
   for (const r of d.stakeRows) {
-    rows.push([formatStation(r.stake.sta), r.stake.label, r.stake.x.toFixed(3), r.stake.y.toFixed(3), degToDmsText(r.stake.az / DEG), r.ground?.toFixed(3) ?? '', r.design?.toFixed(3) ?? '', r.dh?.toFixed(3) ?? '']);
+    const st = rw?.stateAt(r.stake.sta);
+    rows.push([formatStation(r.stake.sta), r.stake.label, r.stake.x.toFixed(3), r.stake.y.toFixed(3), degToDmsText(r.stake.az / DEG), r.ground?.toFixed(3) ?? '', r.design?.toFixed(3) ?? '', r.dh?.toFixed(3) ?? '',
+      ...(st ? [st.fallL.toFixed(2), st.fallR.toFixed(2), st.widenL.toFixed(2), st.widenR.toFixed(2)] : [])]);
   }
   return toCsv(rows);
 }
@@ -139,5 +142,10 @@ export function volumeCsv(p: Project, d: Derived) {
   });
   const last = d.volumes[d.volumes.length - 1];
   if (last) rows.push([], ['合計', '', '', '', '', last.cumCut.toFixed(3), last.cumFill.toFixed(3), '', '', last.mass.toFixed(3), last.mass >= 0 ? '餘土（棄土）' : '缺土（借土）']);
+  if (d.quantities.length) {
+    rows.push([], ['構造物數量（平均斷面法）'], ['構造物', '材料', '數量(m³)']);
+    for (const q of d.quantities) rows.push([q.unit, q.material, q.volume.toFixed(3)]);
+    rows.push(['註：填方面積量到完成面，含構造物所佔體積']);
+  }
   return toCsv(rows);
 }

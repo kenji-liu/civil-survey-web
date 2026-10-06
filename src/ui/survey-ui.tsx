@@ -3,12 +3,13 @@ import { useMemo, useState } from 'react';
 import type { Project } from '../core/model';
 import { nextPointId } from '../core/model';
 import type { ControlPoint, Station, Obs, SurveyResult } from '../core/survey';
-import { parse3DF, to3DF, forwardIntersection, isControlName } from '../core/survey';
+import { to3DF, forwardIntersection, isControlName } from '../core/survey';
 import type { TraverseResult, TraverseRow } from '../core/traverse';
 import { TRAVERSE_TYPES } from '../core/traverse';
 import type { LevelResult, LevelRow } from '../core/leveling';
 import { LEVEL_CLASSES } from '../core/leveling';
 import { fitSimilarity, apply } from '../core/transform';
+import { parseInstrument, INSTRUMENT_FORMATS, type InstrumentFormat } from '../io/instruments';
 import { DEG, degToDmsText, parseStation } from '../core/units';
 import { update, patch } from '../store/store';
 import { decodeText, parsePointText, toCsv } from '../io/csv';
@@ -111,19 +112,28 @@ function BookPanel(c: SurveyCtx) {
   const setSt = (v: Partial<Station>) => patch('stations', p.stations.map((s, i) => (i === stationIdx ? { ...s, ...v } : s)));
   const rep = survey.stations[stationIdx];
   const okCount = survey.stations.filter(s => s.ok).length;
+  const [fmt, setFmt] = useState<InstrumentFormat>('auto');
   return (
     <>
       <Card title="觀測資料">
+        <label className="field" htmlFor="ins-fmt">
+          <span className="field-label">儀器記錄格式</span>
+          <select id="ins-fmt" value={fmt} onChange={e => setFmt(e.target.value as InstrumentFormat)}>
+            {INSTRUMENT_FORMATS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}
+          </select>
+        </label>
         <div className="btn-grid">
           <Btn kind="primary" onClick={async () => {
-            const f = await pickFile('.3df,.txt');
+            const f = await pickFile('.3df,.txt,.raw,.gsi,.sdr,.dat,.rw5,.obs,.csv,*');
             if (!f) return;
-            const r = parse3DF(decodeText(await f.arrayBuffer()));
-            if (!r.stations.length) { toast('檔案中沒有 ST: 測站記錄，請確認是 3DF 格式', 'warn'); return; }
-            patch('stations', [...p.stations, ...r.stations]);
-            setStationIdx(p.stations.length);
-            toast(`匯入 ${r.stations.length} 個測站、${r.stations.reduce((s, x) => s + x.obs.length, 0)} 筆觀測${r.skipped ? `，略過 ${r.skipped} 行` : ''}`, 'ok');
-          }}>匯入 3DF</Btn>
+            const r = parseInstrument(decodeText(await f.arrayBuffer()), fmt);
+            if (!r.stations.length && !r.coords.length) { toast(r.warnings[0] ?? '沒有讀到資料', 'warn'); return; }
+            if (r.stations.length) { patch('stations', [...p.stations, ...r.stations]); setStationIdx(p.stations.length); }
+            if (r.coords.length) addToPoints(r.coords);
+            const fmtName = INSTRUMENT_FORMATS.find(x => x[0] === r.format)?.[1] ?? r.format;
+            toast(`${fmtName}：${r.stations.length} 個測站、${r.stations.reduce((s, x) => s + x.obs.length, 0)} 筆觀測${r.coords.length ? `、${r.coords.length} 個座標點（已加入測點）` : ''}`, 'ok');
+            r.warnings.forEach(w => toast(w, 'warn'));
+          }}>匯入觀測檔</Btn>
           <Btn disabled={!p.stations.length} onClick={() => download(`${safeName(p.info.name)}_${stamp()}.3df`, to3DF(p.stations))}>匯出 3DF</Btn>
         </div>
         <p className="hint">3DF 格式：<code>ST:測站 後視 儀器高 後視角</code>、<code>SD:點號 覘標高 水平角 天頂距 斜距 代碼</code>、<code>HD:點號 覘標高 水平角 高差 平距 代碼</code>。角度用 ddd.mmss。</p>

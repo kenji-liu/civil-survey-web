@@ -32,12 +32,14 @@ export class DxfWriter {
     this.g(11, b.x); this.g(21, b.y); this.g(31, b.z ?? 0);
   }
 
-  text(layer: string, x: number, y: number, height: number, s: string, rotationDeg = 0, z = 0) {
+  /** align：0 靠左、1 置中、2 靠右（以插入點對齊） */
+  text(layer: string, x: number, y: number, height: number, s: string, rotationDeg = 0, z = 0, align: 0 | 1 | 2 = 0) {
     this.ensure(layer);
     this.g(0, 'TEXT'); this.g(8, layer);
     this.g(10, x); this.g(20, y); this.g(30, z);
     this.g(40, height); this.g(1, encodeText(s));
     if (rotationDeg) this.g(50, rotationDeg);
+    if (align) { this.g(72, align); this.g(11, x); this.g(21, y); this.g(31, z); }
   }
 
   /** 2D 多段線（固定高程，等高線用） */

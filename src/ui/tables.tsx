@@ -49,20 +49,22 @@ export function PointTable({ p, highlight, onPick }: { p: Project; highlight: nu
 }
 
 export function StakeTable({ d, selected, onSelect, compact }: { d: Derived; selected: number | null; onSelect(s: number): void; compact?: boolean }) {
+  const rw = !compact && d.roadway;
   return (
     <div className="table-wrap fill">
       <table className="tbl">
-        <thead><tr><th>樁號</th><th>點名</th>{!compact && <><th>E</th><th>N</th><th>方位角</th></>}<th>地面高</th><th>設計高</th><th>挖填高</th></tr></thead>
+        <thead><tr><th>樁號</th><th>點名</th>{!compact && <><th>E</th><th>N</th><th>方位角</th></>}{rw && <><th>左橫坡%</th><th>右橫坡%</th><th>左加寬</th><th>右加寬</th></>}<th>地面高</th><th>設計高</th><th>挖填高</th></tr></thead>
         <tbody>
           {d.stakeRows.map(r => (
             <tr key={r.stake.sta} className={selected !== null && Math.abs(selected - r.stake.sta) < 1e-6 ? 'sel' : ''} onClick={() => onSelect(r.stake.sta)}>
               <td>{formatStation(r.stake.sta)}</td><td className="accent">{r.stake.label}</td>
               {!compact && <><td>{r.stake.x.toFixed(3)}</td><td>{r.stake.y.toFixed(3)}</td><td>{degToDmsText(r.stake.az / DEG)}</td></>}
+              {rw && (() => { const st = d.roadway!.stateAt(r.stake.sta); return <><td>{st.fallL.toFixed(2)}</td><td>{st.fallR.toFixed(2)}</td><td>{st.widenL ? st.widenL.toFixed(2) : ''}</td><td>{st.widenR ? st.widenR.toFixed(2) : ''}</td></>; })()}
               <td>{fmt(r.ground)}</td><td>{fmt(r.design)}</td>
               <td className={r.dh === null ? '' : r.dh >= 0 ? 'cut' : 'fill'}>{r.dh === null ? '—' : `${r.dh >= 0 ? '挖' : '填'} ${Math.abs(r.dh).toFixed(3)}`}</td>
             </tr>
           ))}
-          {!d.stakeRows.length && <tr><td colSpan={compact ? 5 : 8}>尚未建立中心線</td></tr>}
+          {!d.stakeRows.length && <tr><td colSpan={compact ? 5 : 12}>尚未建立中心線</td></tr>}
         </tbody>
       </table>
     </div>

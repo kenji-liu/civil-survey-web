@@ -7,6 +7,8 @@ import type { ControlPoint, Station } from './survey';
 import type { TraverseInput } from './traverse';
 import type { LevelInput } from './leveling';
 import { DEFAULT_LEGEND, type LegendItem } from './sam';
+import { DEFAULT_ROADWAY, type RoadwaySettings } from './superelev';
+import { DEFAULT_ADVANCED, type AdvancedTemplate } from './section-adv';
 
 export interface SurveyPoint {
   id: number;
@@ -66,6 +68,11 @@ export interface Project {
   /** 圖例庫（地類碼 → 名稱、圖層、線型、是否為斷線） */
   legend: LegendItem[];
   sam: { enabled: boolean; useBreaklines: boolean };
+  // ---- v1.0 ----
+  /** 超高與加寬 */
+  roadway: RoadwaySettings;
+  /** 進階組合斷面（構造物單元＋條件＋運算式） */
+  advanced: AdvancedTemplate;
 }
 
 export function isValidZ(z: number | null | undefined, rule: ZRule): z is number {
@@ -107,6 +114,8 @@ export function newProject(name = '未命名工程'): Project {
     profileGround: { source: 'tin', pts: [] },
     legend: DEFAULT_LEGEND.map(l => ({ ...l })),
     sam: { enabled: true, useBreaklines: true },
+    roadway: { ...DEFAULT_ROADWAY },
+    advanced: { ...DEFAULT_ADVANCED, items: DEFAULT_ADVANCED.items.map(i => ({ ...i })) },
   };
 }
 
@@ -134,5 +143,7 @@ export function normalizeProject(p: Partial<Project>): Project {
     profileGround: { ...base.profileGround, ...p.profileGround },
     legend: p.legend?.length ? p.legend : base.legend,
     sam: { ...base.sam, ...p.sam },
+    roadway: { ...base.roadway, ...p.roadway },
+    advanced: { ...base.advanced, ...p.advanced },
   } as Project;
 }

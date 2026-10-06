@@ -19,14 +19,17 @@ import { computeLeveling } from './core/leveling';
 import type { Overlay } from './ui/PlanView';
 import { SamPanel, SamDrawer } from './ui/sam-ui';
 import { Guide, type GuideNav } from './ui/Guide';
+import { AdvancedDrawer } from './ui/design-ui';
+import { PlotPanel, SheetViewer, usePlot, DEFAULT_PLOT } from './ui/plot-ui';
+import type { PlotSettings } from './core/sheets';
 
 // 3D 檢視用到 Three.js（約 150 KB），點開時才下載
 const Terrain3D = lazy(() => import('./ui/Terrain3D'));
 
-type Tab = 'project' | 'survey' | 'points' | 'sam' | 'terrain' | 'grid' | 'alignment' | 'profile' | 'section' | 'export';
+type Tab = 'project' | 'survey' | 'points' | 'sam' | 'terrain' | 'grid' | 'alignment' | 'profile' | 'section' | 'plot' | 'export';
 const TABS: Array<[Tab, string]> = [
   ['project', '專案'], ['survey', '測量計算'], ['points', '測點'], ['sam', '自動連線'], ['terrain', '地形'], ['grid', '方格土方'],
-  ['alignment', '平曲線'], ['profile', '縱斷面'], ['section', '橫斷面'], ['export', '匯出'],
+  ['alignment', '平曲線'], ['profile', '縱斷面'], ['section', '橫斷面'], ['plot', '出圖'], ['export', '匯出'],
 ];
 
 const TOOL_HINT: Record<Tool, string> = {
@@ -58,6 +61,9 @@ export default function App() {
   const [surveyTool, setSurveyTool] = useState<SurveyTool>('ctl');
   const [view3d, setView3d] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [secSub, setSecSub] = useState<'chart' | 'adv'>('chart');
+  const [plotS, setPlotS] = useState<PlotSettings>(DEFAULT_PLOT);
+  const sheets = usePlot(p, d, plotS, tab === 'plot');
   const [stationIdx, setStationIdx] = useState(0);
   const toastId = useRef(0);
 
@@ -187,10 +193,18 @@ export default function App() {
         ),
       };
       case 'section': return {
-        title: '橫斷面圖與土石方數量表', body: (
-          <div className="split2">
+        title: '橫斷面圖與土石方數量表', body: p.advanced.enabled && secSub === 'adv' ? (
+          <div className="drawer-sub">
+            <div className="seg seg-2 small-seg"><button type="button" onClick={() => setSecSub('chart')}>斷面圖與土方</button><button type="button" className="on">組合設定</button></div>
+            <AdvancedDrawer p={p} />
+          </div>
+        ) : (
+          <div className={p.advanced.enabled ? 'drawer-sub' : 'split2'}>
+            {p.advanced.enabled && <div className="seg seg-2 small-seg"><button type="button" className="on">斷面圖與土方</button><button type="button" onClick={() => setSecSub('adv')}>組合設定</button></div>}
+            <div className="split2">
             <SectionChart row={d.sections.find(s => selectedSta !== null && Math.abs(s.stake.sta - selectedSta) < 1e-6) ?? null} />
             <VolumeTable d={d} selected={selectedSta} onSelect={setSelectedSta} />
+            </div>
           </div>
         ),
       };
@@ -198,7 +212,7 @@ export default function App() {
     }
   })();
 
-  const Panel = { project: ProjectPanel, survey: ProjectPanel, sam: ProjectPanel, points: PointsPanel, terrain: TerrainPanel, grid: GridPanel, alignment: AlignmentPanel, profile: ProfilePanel, section: SectionPanel, export: ExportPanel }[tab];
+  const Panel = { project: ProjectPanel, survey: ProjectPanel, sam: ProjectPanel, plot: ProjectPanel, points: PointsPanel, terrain: TerrainPanel, grid: GridPanel, alignment: AlignmentPanel, profile: ProfilePanel, section: SectionPanel, export: ExportPanel }[tab];
 
   return (
     <div className="app">
@@ -229,11 +243,12 @@ export default function App() {
             <h2>{TABS.find(t => t[0] === tab)![1]}</h2>
             <button type="button" className="icon-btn" onClick={() => setSideOpen(false)} aria-label="收合面板" title="收合面板">⟨</button>
           </div>
-          <div className="side-body" key={tab === 'survey' ? `survey-${surveyTool}` : tab}>{tab === 'survey' ? <SurveyPanel {...sctx} /> : tab === 'sam' ? <SamPanel p={p} d={d} toast={toast} /> : <Panel {...ctx} />}</div>
+          <div className="side-body" key={tab === 'survey' ? `survey-${surveyTool}` : tab}>{tab === 'survey' ? <SurveyPanel {...sctx} /> : tab === 'sam' ? <SamPanel p={p} d={d} toast={toast} /> : tab === 'plot' ? <PlotPanel p={p} s={plotS} setS={setPlotS} sheets={sheets} toast={toast} /> : <Panel {...ctx} />}</div>
         </aside>
         {!sideOpen && <button type="button" className="side-reopen" onClick={() => setSideOpen(true)} aria-label="展開面板">⟩</button>}
         <div className="stage">
           <div className="plan">
+            {tab === 'plot' && <SheetViewer sheets={sheets} base={p.info.name || '出圖'} />}
             <PlanView
               points={p.points} zRule={p.zRule} tin={d.tin} contours={layers.contours ? d.contours : []} boundary={p.boundary}
               controls={p.controls} overlays={overlays} sam={d.sam} legend={p.legend}

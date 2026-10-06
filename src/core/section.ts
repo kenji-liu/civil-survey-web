@@ -42,18 +42,22 @@ export function groundAt(ground: OZ[], o: number): number | null {
   return ground[ground.length - 1].z;
 }
 
-export function designSection(ground: OZ[], zc: number, t: SectionTemplate): SectionResult {
+/** 逐樁的路面狀態（超高、加寬）；沒有時用標準斷面的路拱與路寬 */
+export interface SectionOverride { fallL: number; fallR: number; widenL: number; widenR: number }
+
+export function designSection(ground: OZ[], zc: number, t: SectionTemplate, ov?: SectionOverride | null): SectionResult {
   const g = [...ground].sort((a, b) => a.o - b.o);
-  const left = buildSide(g, zc, t, -1);
-  const right = buildSide(g, zc, t, 1);
+  const left = buildSide(g, zc, t, -1, ov);
+  const right = buildSide(g, zc, t, 1, ov);
   const design: OZ[] = [...left.pts.slice().reverse(), { o: 0, z: zc }, ...right.pts];
   const { cut, fill } = areaBetween(g, design);
   return { ground: g, design, zc, cutArea: cut, fillArea: fill, left: left.res, right: right.res };
 }
 
-function buildSide(g: OZ[], zc: number, t: SectionTemplate, side: 1 | -1): { pts: OZ[]; res: SideResult } {
-  const w = side > 0 ? t.widthR : t.widthL;
-  const edge: OZ = { o: side * w, z: zc - (t.crossfall / 100) * w };
+function buildSide(g: OZ[], zc: number, t: SectionTemplate, side: 1 | -1, ov?: SectionOverride | null): { pts: OZ[]; res: SideResult } {
+  const w = (side > 0 ? t.widthR : t.widthL) + (ov ? (side > 0 ? ov.widenR : ov.widenL) : 0);
+  const fall = ov ? (side > 0 ? ov.fallR : ov.fallL) : t.crossfall;
+  const edge: OZ = { o: side * w, z: zc - (fall / 100) * w };
   const pts: OZ[] = [edge];
   const gEdge = groundAt(g, edge.o);
   if (gEdge === null) return { pts, res: { mode: 'none', daylight: null, caught: false } };

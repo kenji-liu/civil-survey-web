@@ -243,6 +243,12 @@ export function SectionChart(props: { row: SectionRow | null }) {
         quad(om, zm, zm, b, gb, db, fb >= 0 ? C.cut : C.fill);
       }
     }
+    // 構造物實體
+    const solids = row.solids ?? [];
+    for (const sol of solids) {
+      ctx.fillStyle = 'rgba(203,213,224,0.55)'; ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
+      ctx.beginPath(); sol.poly.forEach((q, i) => (i ? ctx.lineTo(X(q.o), Y(q.z)) : ctx.moveTo(X(q.o), Y(q.z)))); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
     // 中心線
     ctx.strokeStyle = C.cl; ctx.setLineDash([8, 3, 2, 3]); ctx.beginPath(); ctx.moveTo(X(0), M.t - 6); ctx.lineTo(X(0), H - M.b); ctx.stroke(); ctx.setLineDash([]);
     // 地面與設計

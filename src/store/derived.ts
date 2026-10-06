@@ -7,12 +7,18 @@ import { buildAlignment, type Alignment, type Stake } from '../core/alignment';
 import { buildProfile, type Profile } from '../core/profile';
 import { designSection, averageEndArea, type SectionResult, type VolumeRow, type OZ } from '../core/section';
 import { runSam, samBreaklines, type SamResult } from '../core/sam';
+import { buildRoadway, type Roadway } from '../core/superelev';
+import { designSectionAdv, type StructSolid } from '../core/section-adv';
 
 export interface StakeRow { stake: Stake; ground: number | null; design: number | null; dh: number | null }
-export interface SectionRow { stake: Stake; result: SectionResult | null; reason?: string }
+export interface SectionRow { stake: Stake; result: SectionResult | null; reason?: string; solids?: StructSolid[]; errors?: string[] }
+
+/** 構造物數量：各材料逐樁面積與平均斷面法體積 */
+export interface QuantityRow { material: string; unit: string; volume: number }
 
 export interface Derived {
   sam: SamResult | null;
+  roadway: Roadway | null;
   validCount: number;
   nullCount: number;
   tin: Tin | null;
@@ -23,6 +29,7 @@ export interface Derived {
   stakeRows: StakeRow[];
   sections: SectionRow[];
   volumes: VolumeRow[];
+  quantities: QuantityRow[];
 }
 
 /** 自動連線：依測點順序解讀代碼（無效高程視為 null） */
@@ -78,7 +85,7 @@ export function stakeRowsOf(al: Alignment | null, g: GroundFn | null, profile: P
   });
 }
 
-export function sectionsOf(al: Alignment | null, rows: StakeRow[], tin: Tin | null, p: Pick<Project, 'sectionSample' | 'template'>): SectionRow[] {
+export function sectionsOf(al: Alignment | null, rows: StakeRow[], tin: Tin | null, p: Pick<Project, 'sectionSample' | 'template' | 'advanced'>, roadway: Roadway | null = null): SectionRow[] {
   if (!al) return [];
   const { halfWidth, step } = p.sectionSample;
   return rows.map(({ stake, design }) => {
@@ -93,8 +100,29 @@ export function sectionsOf(al: Alignment | null, rows: StakeRow[], tin: Tin | nu
       if (z !== null) ground.push({ o, z });
     }
     if (ground.length < 2) return { stake, result: null, reason: '斷面超出地形範圍' };
-    return { stake, result: designSection(ground, design, p.template) };
+    const ov = roadway ? roadway.stateAt(stake.sta) : null;
+    if (p.advanced?.enabled) {
+      const r = designSectionAdv(ground, design, stake.sta, p.template, p.advanced, ov);
+      return { stake, result: r, solids: r.solids, errors: r.errors };
+    }
+    return { stake, result: designSection(ground, design, p.template, ov) };
   });
+}
+
+export function quantitiesOf(sections: SectionRow[]): QuantityRow[] {
+  const key = (s: StructSolid) => `${s.unit}|${s.material}`;
+  const areaAt = (row: SectionRow) => {
+    const m = new Map<string, number>();
+    for (const s of row.solids ?? []) m.set(key(s), (m.get(key(s)) ?? 0) + s.area);
+    return m;
+  };
+  const tot = new Map<string, number>();
+  for (let i = 1; i < sections.length; i++) {
+    const a = areaAt(sections[i - 1]), b = areaAt(sections[i]);
+    const L = sections[i].stake.sta - sections[i - 1].stake.sta;
+    for (const k of new Set([...a.keys(), ...b.keys()])) tot.set(k, (tot.get(k) ?? 0) + (((a.get(k) ?? 0) + (b.get(k) ?? 0)) / 2) * L);
+  }
+  return [...tot.entries()].map(([k, volume]) => { const [unit, material] = k.split('|'); return { unit, material, volume }; });
 }
 
 export function volumesOf(sections: SectionRow[]) {
@@ -114,9 +142,11 @@ export function computeDerived(p: Project): Derived {
   const profile = buildProfile(p.vpis);
   const g = groundFnOf(tin, p.profileGround);
   const stakeRows = stakeRowsOf(alignment, g, profile);
-  const sections = sectionsOf(alignment, stakeRows, tin, p);
+  const roadway = buildRoadway(alignment, p.roadway);
+  const sections = sectionsOf(alignment, stakeRows, tin, p, roadway);
   return {
-    sam, validCount: valid.length, nullCount: p.points.length - valid.length,
+    quantities: quantitiesOf(sections),
+    sam, roadway, validCount: valid.length, nullCount: p.points.length - valid.length,
     tin, contours, alignment, profile, groundLine: groundLineOf(alignment, g), stakeRows, sections, volumes: volumesOf(sections),
   };
 }
@@ -132,10 +162,12 @@ export function useDerived(p: Project): Derived {
   const g = useMemo(() => groundFnOf(tin, p.profileGround), [tin, p.profileGround]);
   const groundLine = useMemo(() => groundLineOf(alignment, g), [alignment, g]);
   const stakeRows = useMemo(() => stakeRowsOf(alignment, g, profile), [alignment, g, profile]);
-  const sections = useMemo(() => sectionsOf(alignment, stakeRows, tin, { sectionSample: p.sectionSample, template: p.template }), [alignment, stakeRows, tin, p.sectionSample, p.template]);
+  const roadway = useMemo(() => buildRoadway(alignment, p.roadway), [alignment, p.roadway]);
+  const sections = useMemo(() => sectionsOf(alignment, stakeRows, tin, { sectionSample: p.sectionSample, template: p.template, advanced: p.advanced }, roadway), [alignment, stakeRows, tin, p.sectionSample, p.template, p.advanced, roadway]);
+  const quantities = useMemo(() => quantitiesOf(sections), [sections]);
   const volumes = useMemo(() => volumesOf(sections), [sections]);
   return {
-    sam, validCount: valid.length, nullCount: p.points.length - valid.length,
+    sam, roadway, quantities, validCount: valid.length, nullCount: p.points.length - valid.length,
     tin, contours, alignment, profile, groundLine, stakeRows, sections, volumes,
   };
 }

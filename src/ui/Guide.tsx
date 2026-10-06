@@ -88,7 +88,7 @@ export function Guide(props: { onClose(): void; go(nav: GuideNav, demo: boolean)
       go: { tab: 'survey', sub: 'ctl', label: '前往「測量計算 → 控制點」' },
       steps: [
         <>新專案後到「測量計算 → 控制點」，按「匯入 CSV」選 <b>範例3_控制點.csv</b>，平面圖會出現 K1～K4 四個黃色三角形。</>,
-        <>切到「觀測手簿」，按「匯入 3DF」選 <b>範例4_外業觀測.3df</b>。</>,
+        <>切到「觀測手簿」，儀器記錄格式選「自動判斷」，按「匯入觀測檔」選 <b>範例4_外業觀測.3df</b>。Topcon、Sokkia、Leica、Nikon、Trimble、Zeiss 的原始記錄檔也用同一個按鈕匯入，會自動轉成 3DF。</>,
         <>上方顯示「2/2 站已算出」。第一站 K1 後視 K2；第二站架在 T1，T1 是在第一站觀測的<b>轉站點</b>（點名以英文字母開頭），算出後自動成為已知點。</>,
         <>下方左表是觀測值，右表是算出的座標。試著把某點的天頂距改一下，右表會立刻重算。</>,
         <>按「加入測點」把結果送到測點，再按「轉站點寫入控制點」保存 T1。</>,
@@ -177,7 +177,44 @@ export function Guide(props: { onClose(): void; go(nav: GuideNav, demo: boolean)
       expect: [<>中心線全長約 {e.alLength.toFixed(1)} m、{e.curves} 個平曲線、{e.stakes} 個樁號；總挖方約 {n(e.cut)} m³、總填方約 {n(e.fill)} m³。</>],
     },
     {
-      title: '第 10 課　匯出與備份', time: '3 分鐘',
+      title: '第 10 課　緩和曲線、超高與加寬', time: '6 分鐘',
+      goal: '在平曲線加上克羅梭緩和曲線，並依公路路線設計規範計算超高與加寬。',
+      go: { tab: 'alignment', label: '載入示範資料並前往「平曲線」', demo: true },
+      steps: [
+        <>在座標法表格的 IP2 列，「緩和 Ls」填 <code>30</code>。曲線資料表的起終點會變成 TS、ST，樁號表也會多出 TS、SC、CS、ST 樁。</>,
+        <>往下找到「超高與加寬」，勾選「啟用」，設計速率填 <code>40</code>、最大超高 8%。</>,
+        <>表格列出每個曲線的超高 e、加寬 ΔW、漸變長與全超高範圍；半徑小於規範最小值或需要緩和曲線時會出現提醒。</>,
+        <>下方樁號表多了左右橫坡與加寬欄。到「橫斷面」頁逐樁看，彎道上的路面會傾斜。</>,
+      ],
+      expect: [<>R = 80、Vd = 40 時，計算超高小於路拱，取 2% 反向路拱；加寬 0.30 m 小於 0.5 m，依規範免設。</>],
+      tips: [<>超高公式 e = Vd²/(127R) − f，f 依規範表 9.2；漸變以中心線為軸，漸變率依表 9.9。</>],
+    },
+    {
+      title: '第 11 課　進階組合斷面與構造物', time: '8 分鐘',
+      goal: '用構造物單元、條件與運算式組出標準斷面，並計算構造物數量。',
+      go: { tab: 'section', label: '載入示範資料並前往「橫斷面」', demo: true },
+      steps: [
+        <>「斷面組合方式」切到「進階組合」。示範已經放了三個構造物：兩側路肩、挖方側才設的 U 形側溝（條件 <code>GH&gt;LY</code>：地面高於連接點）、填方高差大於 1.5 m 才設的擋土牆。</>,
+        <>下方抽屜切到「組合設定」。擋土牆的牆高寫成 <code>H=ROUND(LY-EH(LX+0.4)+0.5,1)</code>，表示量到牆趾處的地面再加 0.5 m 埋入，取到 0.1 m。</>,
+        <>切回「斷面圖與土方」，灰色是構造物；左側面板會列出各構造物的混凝土數量。</>,
+        <>試著在「查表」新增表名「路肩寬」、IN 內插、<code>0:0.5, 300:1.0</code>，再把路肩參數改成 <code>W=IN(路肩寬, ST)</code>，路肩會隨樁號漸變。</>,
+        <>邊坡每隔高度設平台：填 <code>5</code>，挖方邊坡每升 5 m 會自動加 1.5 m 平台。</>,
+      ],
+      tips: [<>參數或條件寫錯時，「語法」欄會顯示 ✕ 和原因，該構造物會略過，不影響其他項目。</>],
+    },
+    {
+      title: '第 12 課　出圖', time: '5 分鐘',
+      goal: '產生有圖框的平面圖、縱斷面圖與橫斷面圖，輸出 PDF 或 DXF。',
+      go: { tab: 'plot', label: '載入示範資料並前往「出圖」', demo: true },
+      steps: [
+        <>「出圖」頁選圖紙大小（A3、A2、A1）與比例：平面圖會依比例自動分幅，縱斷面圖依水平比例分張，橫斷面圖依實際寬度自動排列。</>,
+        <>中間是圖紙預覽，用 ◀ ▶ 翻頁。標題欄的工程名稱、設計者取自「專案」頁，圖號自動編。</>,
+        <>按「列印／另存 PDF」會開新視窗，在列印對話框選「另存為 PDF」、紙張與設定相同、邊界「無」。</>,
+        <>按「下載 DXF」得到全部圖紙（單位 mm，並排在模型空間），可在 AutoCAD 加工。</>,
+      ],
+    },
+    {
+      title: '第 13 課　匯出與備份', time: '3 分鐘',
       goal: '把成果帶到 AutoCAD 與 Excel，並備份專案。',
       go: { tab: 'export', label: '前往「匯出」頁' },
       steps: [
@@ -206,7 +243,7 @@ export function Guide(props: { onClose(): void; go(nav: GuideNav, demo: boolean)
       <div className="guide">
         <header className="guide-head">
           <h2 id="guide-title">範例教學</h2>
-          <span className="muted">跟著做一遍，大約 1 小時可以熟悉全部功能</span>
+          <span className="muted">跟著做一遍，大約 1.5 小時可以熟悉全部功能</span>
           <button type="button" className="icon-btn" onClick={props.onClose} aria-label="關閉教學">✕</button>
         </header>
         <div className="guide-body">
