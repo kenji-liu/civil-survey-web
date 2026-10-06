@@ -6,11 +6,13 @@ import { buildTin, traceContours, type Tin, type ContourLine, type Pt3 } from '.
 import { buildAlignment, type Alignment, type Stake } from '../core/alignment';
 import { buildProfile, type Profile } from '../core/profile';
 import { designSection, averageEndArea, type SectionResult, type VolumeRow, type OZ } from '../core/section';
+import { runSam, samBreaklines, type SamResult } from '../core/sam';
 
 export interface StakeRow { stake: Stake; ground: number | null; design: number | null; dh: number | null }
 export interface SectionRow { stake: Stake; result: SectionResult | null; reason?: string }
 
 export interface Derived {
+  sam: SamResult | null;
   validCount: number;
   nullCount: number;
   tin: Tin | null;
@@ -21,6 +23,16 @@ export interface Derived {
   stakeRows: StakeRow[];
   sections: SectionRow[];
   volumes: VolumeRow[];
+}
+
+/** 自動連線：依測點順序解讀代碼（無效高程視為 null） */
+export function samOf(p: Pick<Project, 'points' | 'zRule' | 'legend' | 'sam'>): SamResult | null {
+  if (!p.sam.enabled || !p.points.some(q => q.code)) return null;
+  return runSam(p.points.map(q => ({ name: q.name, x: q.x, y: q.y, z: isValidZ(q.z, p.zRule) ? q.z : null, code: q.code })), p.legend);
+}
+
+export function breaklinesOf(p: Pick<Project, 'legend' | 'sam'>, sam: SamResult | null): Pt3[][] {
+  return sam && p.sam.useBreaklines ? samBreaklines(sam, p.legend) : [];
 }
 
 export function validPoints(p: Project): Pt3[] {
@@ -95,7 +107,8 @@ export function volumesOf(sections: SectionRow[]) {
 /** 不經 React 的完整計算（測試與批次用） */
 export function computeDerived(p: Project): Derived {
   const valid = validPoints(p);
-  const tin = buildTin(valid, { maxEdge: p.tin.maxEdge, boundary: p.tin.useBoundary ? p.boundary : null });
+  const sam = samOf(p);
+  const tin = buildTin(valid, { maxEdge: p.tin.maxEdge, boundary: p.tin.useBoundary ? p.boundary : null, breaklines: breaklinesOf(p, sam) });
   const contours = tin ? traceContours(tin, p.contour.interval, p.contour.majorEvery) : [];
   const alignment = p.alignment ? buildAlignment(p.alignment) : null;
   const profile = buildProfile(p.vpis);
@@ -103,14 +116,16 @@ export function computeDerived(p: Project): Derived {
   const stakeRows = stakeRowsOf(alignment, g, profile);
   const sections = sectionsOf(alignment, stakeRows, tin, p);
   return {
-    validCount: valid.length, nullCount: p.points.length - valid.length,
+    sam, validCount: valid.length, nullCount: p.points.length - valid.length,
     tin, contours, alignment, profile, groundLine: groundLineOf(alignment, g), stakeRows, sections, volumes: volumesOf(sections),
   };
 }
 
 export function useDerived(p: Project): Derived {
   const valid = useMemo(() => validPoints(p), [p.points, p.zRule]); // eslint-disable-line react-hooks/exhaustive-deps
-  const tin = useMemo(() => buildTin(valid, { maxEdge: p.tin.maxEdge, boundary: p.tin.useBoundary ? p.boundary : null }), [valid, p.tin, p.boundary]);
+  const sam = useMemo(() => samOf(p), [p.points, p.zRule, p.legend, p.sam]); // eslint-disable-line react-hooks/exhaustive-deps
+  const breaklines = useMemo(() => breaklinesOf(p, sam), [p.legend, p.sam, sam]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tin = useMemo(() => buildTin(valid, { maxEdge: p.tin.maxEdge, boundary: p.tin.useBoundary ? p.boundary : null, breaklines }), [valid, p.tin, p.boundary, breaklines]);
   const contours = useMemo(() => (tin ? traceContours(tin, p.contour.interval, p.contour.majorEvery) : []), [tin, p.contour.interval, p.contour.majorEvery]);
   const alignment = useMemo(() => (p.alignment ? buildAlignment(p.alignment) : null), [p.alignment]);
   const profile = useMemo(() => buildProfile(p.vpis), [p.vpis]);
@@ -120,7 +135,7 @@ export function useDerived(p: Project): Derived {
   const sections = useMemo(() => sectionsOf(alignment, stakeRows, tin, { sectionSample: p.sectionSample, template: p.template }), [alignment, stakeRows, tin, p.sectionSample, p.template]);
   const volumes = useMemo(() => volumesOf(sections), [sections]);
   return {
-    validCount: valid.length, nullCount: p.points.length - valid.length,
+    sam, validCount: valid.length, nullCount: p.points.length - valid.length,
     tin, contours, alignment, profile, groundLine, stakeRows, sections, volumes,
   };
 }

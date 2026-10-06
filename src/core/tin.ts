@@ -1,5 +1,6 @@
 // 不規則三角網 (TIN)：建網、內插取高程、等高線追蹤
 import Delaunator from 'delaunator';
+import cdt2d from 'cdt2d';
 import { pointInPolygon, type XY } from './geom';
 
 export interface Pt3 { x: number; y: number; z: number }
@@ -9,6 +10,8 @@ export interface TinOptions {
   maxEdge?: number;
   /** 外邊界：三角形形心在邊界外則捨棄 */
   boundary?: XY[] | null;
+  /** 斷線（地形線）：三角形邊不得跨越 */
+  breaklines?: Pt3[][];
 }
 
 export interface Tin {
@@ -21,19 +24,34 @@ export interface Tin {
   maxZ: number;
   /** 參與建網的點數（去除無高程與重複點後） */
   nPts: number;
+  /** 實際套用的斷線段數 */
+  nBreakEdges: number;
+  /** 斷線無法套用時的說明 */
+  warning: string | null;
   sample(x: number, y: number): number | null;
 }
 
 export function buildTin(points: Pt3[], opts: TinOptions = {}): Tin | null {
-  // 去除重複座標（取第一個）
-  const seen = new Set<string>();
+  // 去除重複座標（取第一個）；斷線頂點若和測點重合就共用同一點
+  const ptIndex = new Map<string, number>();
   const ps: Pt3[] = [];
-  for (const p of points) {
-    if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.z)) continue;
-    const k = `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
+  const keyOf = (p: Pt3) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
+  const addPt = (p: Pt3) => {
+    if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.z)) return -1;
+    const k = keyOf(p);
+    const i = ptIndex.get(k);
+    if (i !== undefined) return i;
+    ptIndex.set(k, ps.length);
     ps.push(p);
+    return ps.length - 1;
+  };
+  for (const p of points) addPt(p);
+  const edges: Array<[number, number]> = [];
+  for (const bl of opts.breaklines ?? []) {
+    for (let i = 1; i < bl.length; i++) {
+      const a = addPt(bl[i - 1]), b = addPt(bl[i]);
+      if (a >= 0 && b >= 0 && a !== b) edges.push([a, b]);
+    }
   }
   if (ps.length < 3) return null;
   const n = ps.length;
@@ -45,12 +63,27 @@ export function buildTin(points: Pt3[], opts: TinOptions = {}): Tin | null {
     xs[i] = ps[i].x; ys[i] = ps[i].y; zs[i] = ps[i].z;
     coords[2 * i] = ps[i].x - ox; coords[2 * i + 1] = ps[i].y - oy;
   }
-  let d: Delaunator<ArrayLike<number>>;
-  try { d = new Delaunator(coords); } catch { return null; }
+  let triangles: ArrayLike<number>;
+  let warning: string | null = null;
+  let nBreakEdges = 0;
+  if (edges.length) {
+    try {
+      const cells = cdt2d(Array.from({ length: n }, (_, i) => [coords[2 * i], coords[2 * i + 1]] as [number, number]), edges, { exterior: true });
+      const flat = new Uint32Array(cells.length * 3);
+      cells.forEach((c, i) => { flat[3 * i] = c[0]; flat[3 * i + 1] = c[1]; flat[3 * i + 2] = c[2]; });
+      triangles = flat;
+      nBreakEdges = edges.length;
+    } catch {
+      warning = '斷線彼此交叉或重疊，無法套用，已改用一般三角網';
+      triangles = new Delaunator(coords).triangles;
+    }
+  } else {
+    try { triangles = new Delaunator(coords).triangles; } catch { return null; }
+  }
   const maxE2 = opts.maxEdge && opts.maxEdge > 0 ? opts.maxEdge * opts.maxEdge : Infinity;
   const boundary = opts.boundary && opts.boundary.length >= 3 ? opts.boundary : null;
   const keep: number[] = [];
-  const t = d.triangles;
+  const t = triangles;
   for (let i = 0; i < t.length; i += 3) {
     const a = t[i], b = t[i + 1], c = t[i + 2];
     if (maxE2 !== Infinity) {
@@ -71,7 +104,7 @@ export function buildTin(points: Pt3[], opts: TinOptions = {}): Tin | null {
   }
   const index = buildIndex(xs, ys, tri);
   return {
-    xs, ys, zs, tri, minZ, maxZ, nPts: n,
+    xs, ys, zs, tri, minZ, maxZ, nPts: n, nBreakEdges, warning,
     sample: (x, y) => sampleAt(xs, ys, zs, tri, index, x, y),
   };
 }

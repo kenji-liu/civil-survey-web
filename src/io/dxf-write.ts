@@ -62,6 +62,11 @@ export class DxfWriter {
     this.g(0, 'SEQEND'); this.g(8, layer);
   }
 
+  circle(layer: string, x: number, y: number, r: number, z = 0) {
+    this.ensure(layer);
+    this.g(0, 'CIRCLE'); this.g(8, layer); this.g(10, x); this.g(20, y); this.g(30, z); this.g(40, r);
+  }
+
   face3d(layer: string, a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }, c: { x: number; y: number; z: number }) {
     this.ensure(layer);
     this.g(0, '3DFACE'); this.g(8, layer);

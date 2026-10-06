@@ -41,15 +41,29 @@ export function demoProject(): Project {
       id++;
     }
   }
-  // 溪床線
+  // 溪流水線（自動連線碼 RV1：起點 S、轉折 L、終點 E；同時是三角網斷線）
   for (let x = 0; x <= 420; x += 5) {
     const y = streamY(x);
-    pts.push({ id, name: `S${id}`, x: E0 + x, y: N0 + y, z: round(demoTerrain(x, y) - 0.6), code: 'STRM' });
+    const code = x === 0 ? 'RV1S' : x >= 420 ? 'RV1E' : 'RV1L';
+    pts.push({ id, name: `S${id}`, x: E0 + x, y: N0 + y, z: round(demoTerrain(x, y) - 0.6), code });
+    id++;
+  }
+  // 南岸農舍一帶的地物（外業依施測順序記錄的連線碼）
+  const feat: Array<[number, number, string]> = [
+    [60, 20, 'RD1S'], [67, 16, 'RD2S'], [95, 44, 'RD1L.E'], [102, 40, 'RD2L'],
+    [118, 64, 'RD1M'], [125, 60, 'RD2M'], [132, 92, 'RD1L'], [139, 90, 'RD2L.E'], [134, 108, 'RD1E'], [141, 106, 'RD2E'],
+    [150, 60, 'BD1S'], [166, 60, 'BD1L'], [166, 74, 'BD1L..2R'], [150, 74, 'BD1C'],
+    [175, 40, 'BD2S'], [187, 40, 'BD2L'], [187, 50, 'BD2X..1R'],
+    [145, 54, 'BW1S'], [195, 34, 'BW1L'], [203, 56, 'BW1L'], [200, 82, 'BW1E'],
+    [128, 30, 'TR'], [140, 26, 'TR'], [147, 57, 'F'], [172, 80, 'IC1O3'],
+  ];
+  for (const [x, y, code] of feat) {
+    pts.push({ id, name: String(id), x: E0 + x, y: N0 + y, z: round(demoTerrain(x, y)), code });
     id++;
   }
   // 兩筆常見的錯誤資料：無高程點、-9999，示範自動排除
-  pts.push({ id: id++, name: 'BAD1', x: E0 + 210, y: N0 + 40, z: null, code: 'NOZ' });
-  pts.push({ id: id++, name: 'BAD2', x: E0 + 230, y: N0 + 60, z: null, code: 'NOZ' });
+  pts.push({ id: id++, name: 'BAD1', x: E0 + 210, y: N0 + 40, z: null });
+  pts.push({ id: id++, name: 'BAD2', x: E0 + 230, y: N0 + 60, z: null });
   p.points = pts;
   p.boundary = [
     { x: E0 + 6, y: N0 + 6 }, { x: E0 + 414, y: N0 + 6 }, { x: E0 + 414, y: N0 + 314 }, { x: E0 + 6, y: N0 + 314 },

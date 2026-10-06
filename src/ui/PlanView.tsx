@@ -8,12 +8,13 @@ import type { Tin, ContourLine } from '../core/tin';
 import type { Alignment } from '../core/alignment';
 import type { GridResult } from '../core/earthwork-grid';
 import { formatStation } from '../core/units';
+import type { SamResult, LegendItem } from '../core/sam';
 
 export type Tool = 'pan' | 'boundary' | 'ip' | 'addpt' | 'measure';
 
 export interface Layers {
   points: boolean; labels: boolean; tin: boolean; contours: boolean; contourLabels: boolean;
-  boundary: boolean; alignment: boolean; stakes: boolean; grid: boolean;
+  boundary: boolean; alignment: boolean; stakes: boolean; grid: boolean; sam: boolean;
 }
 
 /** 疊加線：導線、觀測方向等 */
@@ -23,6 +24,8 @@ export interface PlanViewProps {
   points: SurveyPoint[];
   controls: Array<{ name: string; x: number; y: number }>;
   overlays: Overlay[];
+  sam: SamResult | null;
+  legend: LegendItem[];
   zRule: ZRule;
   tin: Tin | null;
   contours: ContourLine[];
@@ -286,6 +289,9 @@ function draw(ctx: CanvasRenderingContext2D, p: PlanViewProps, v: View, W: numbe
     }
   }
 
+  // 自動連線地物
+  if (p.layers.sam && p.sam) drawSam(ctx, p.sam, p.legend, v, X, Y);
+
   // 邊界
   if (p.layers.boundary && p.boundary && p.boundary.length >= 3) {
     ctx.strokeStyle = C.boundary; ctx.lineWidth = 1.5; ctx.setLineDash([8, 5]);
@@ -410,6 +416,68 @@ function draw(ctx: CanvasRenderingContext2D, p: PlanViewProps, v: View, W: numbe
     ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = C.draft;
     for (const q of p.draft) { ctx.beginPath(); ctx.arc(X(q.x), Y(q.y), 3.5, 0, Math.PI * 2); ctx.fill(); }
+  }
+}
+
+function drawSam(ctx: CanvasRenderingContext2D, sam: SamResult, legend: LegendItem[], v: View, X: (x: number) => number, Y: (y: number) => number) {
+  const L = new Map(legend.map(l => [l.code.toUpperCase(), l]));
+  for (const ln of sam.lines) {
+    const it = L.get(ln.feature);
+    const col = it?.color ?? '#cbd5e0';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = it?.code === 'BD' ? 1.8 : 1.4;
+    ctx.setLineDash(it?.style === 'dash' ? [8, 5] : it?.style === 'dot' ? [2, 4] : []);
+    ctx.beginPath();
+    ln.pts.forEach((q, i) => (i ? ctx.lineTo(X(q.x), Y(q.y)) : ctx.moveTo(X(q.x), Y(q.y))));
+    if (ln.closed) ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 圍牆、駁坎、柵欄：沿線加短刻線（正向畫在右側、反向畫在左側）
+    const st = it?.style;
+    if ((st === 'wall' || st === 'bank' || st === 'fence') && v.s > 1.2) {
+      const gap = st === 'bank' ? 2 : st === 'wall' ? 3 : 4, len = st === 'bank' ? 1.2 : 0.6;
+      const ring = ln.closed ? [...ln.pts, ln.pts[0]] : ln.pts;
+      ctx.beginPath();
+      let carry = 0;
+      for (let i = 1; i < ring.length; i++) {
+        const a = ring[i - 1], b = ring[i];
+        const d = Math.hypot(b.x - a.x, b.y - a.y);
+        if (d < 1e-9) continue;
+        const ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
+        const side = ln.reverse ? 1 : -1; // 右側法向 = (uy, −ux)
+        const nx = -side * uy, ny = side * ux;
+        for (let t = gap - carry; t < d; t += gap) {
+          const px = a.x + ux * t, py = a.y + uy * t;
+          if (st === 'fence') { ctx.moveTo(X(px) - 3, Y(py) - 3); ctx.lineTo(X(px) + 3, Y(py) + 3); ctx.moveTo(X(px) + 3, Y(py) - 3); ctx.lineTo(X(px) - 3, Y(py) + 3); }
+          else { ctx.moveTo(X(px), Y(py)); ctx.lineTo(X(px + nx * len), Y(py + ny * len)); }
+        }
+        carry = (carry + d) % gap;
+      }
+      ctx.stroke();
+    }
+    if (ln.label && ln.labelAt) {
+      ctx.fillStyle = col; ctx.font = '600 12px "Noto Sans TC", sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(ln.label, X(ln.labelAt.x), Y(ln.labelAt.y) + 4); ctx.textAlign = 'start';
+    }
+  }
+  for (const c of sam.circles) {
+    ctx.strokeStyle = L.get(c.feature)?.color ?? '#cbd5e0'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(X(c.c.x), Y(c.c.y), c.r * v.s, 0, Math.PI * 2); ctx.stroke();
+  }
+  for (const sy of sam.symbols) {
+    const it = L.get(sy.feature);
+    const x = X(sy.x), y = Y(sy.y);
+    ctx.strokeStyle = it?.color ?? '#fff'; ctx.fillStyle = it?.color ?? '#fff'; ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    switch (it?.symbol) {
+      case 'pole': ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.stroke(); ctx.beginPath(); ctx.arc(x, y, 1.6, 0, Math.PI * 2); ctx.fill(); break;
+      case 'tel': ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.moveTo(x - 3, y - 2); ctx.lineTo(x + 3, y - 2); ctx.moveTo(x, y - 2); ctx.lineTo(x, y + 3); ctx.stroke(); break;
+      case 'manhole': ctx.rect(x - 4, y - 4, 8, 8); ctx.moveTo(x - 4, y - 4); ctx.lineTo(x + 4, y + 4); ctx.stroke(); break;
+      case 'hydrant': ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill(); break;
+      case 'tree': ctx.arc(x, y, 5, 0, Math.PI * 2); for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; ctx.moveTo(x, y); ctx.lineTo(x + 5 * Math.cos(a), y + 5 * Math.sin(a)); } ctx.stroke(); break;
+      case 'lamp': ctx.arc(x, y, 2.5, 0, Math.PI * 2); for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; ctx.moveTo(x + 4 * Math.cos(a), y + 4 * Math.sin(a)); ctx.lineTo(x + 6.5 * Math.cos(a), y + 6.5 * Math.sin(a)); } ctx.stroke(); break;
+      default: ctx.moveTo(x, y - 5); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 5); ctx.lineTo(x - 5, y); ctx.closePath(); ctx.stroke();
+    }
   }
 }
 

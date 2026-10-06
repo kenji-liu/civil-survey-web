@@ -7,7 +7,7 @@ import { DxfWriter } from './dxf-write';
 import { toCsv } from './csv';
 import { formatStation, degToDmsText, DEG } from '../core/units';
 
-export interface DxfLayersOpt { points: boolean; labels: boolean; tin: boolean; contours: boolean; boundary: boolean; alignment: boolean; stakes: boolean; grid: boolean; textHeight: number }
+export interface DxfLayersOpt { sam: boolean; points: boolean; labels: boolean; tin: boolean; contours: boolean; boundary: boolean; alignment: boolean; stakes: boolean; grid: boolean; textHeight: number }
 
 export function buildDxf(p: Project, d: Derived, grid: GridResult | null, o: DxfLayersOpt): string {
   const w = new DxfWriter()
@@ -42,6 +42,23 @@ export function buildDxf(p: Project, d: Derived, grid: GridResult | null, o: Dxf
         if (ang > 90) ang -= 180; else if (ang < -90) ang += 180;
         w.text('CONT_TXT', m.x, m.y, h, String(l.level), ang, l.level);
       }
+    }
+  }
+  if (o.sam && d.sam) {
+    const L = new Map(p.legend.map(l => [l.code.toUpperCase(), l]));
+    const layerOf = (f: string) => L.get(f)?.layer || `SAM_${f}`;
+    for (const ln of d.sam.lines) {
+      const allZ = ln.pts.every(q => q.z !== null);
+      if (allZ) w.polyline3d(layerOf(ln.feature), ln.pts as Array<{ x: number; y: number; z: number }>, ln.closed);
+      else w.polyline(layerOf(ln.feature), ln.pts, ln.closed);
+      if (ln.label && ln.labelAt) w.text(layerOf(ln.feature), ln.labelAt.x, ln.labelAt.y, h * 1.5, ln.label);
+    }
+    for (const c of d.sam.circles) w.circle(layerOf(c.feature), c.c.x, c.c.y, c.r);
+    for (const sy of d.sam.symbols) {
+      const lay = layerOf(sy.feature);
+      w.point(lay, sy.x, sy.y, sy.z ?? 0);
+      w.circle(lay, sy.x, sy.y, h * 0.5, sy.z ?? 0);
+      w.text(lay, sy.x + h * 0.7, sy.y - h * 0.4, h * 0.8, L.get(sy.feature)?.name ?? sy.feature);
     }
   }
   if (o.boundary && p.boundary && p.boundary.length >= 3) w.polyline('BOUNDARY', p.boundary, true);

@@ -22,6 +22,16 @@ describe('示範專案完整流程', () => {
     const last = d.volumes[d.volumes.length - 1];
     expect(last.cumCut).toBeGreaterThan(0);
   });
+  it('自動連線示範：農舍、道路、圍牆、溪流斷線', () => {
+    const s = d.sam!;
+    expect(s.errors).toEqual([]);
+    expect(s.lines.filter(l => l.feature === 'BD').every(l => l.closed)).toBe(true);
+    expect(s.lines.filter(l => l.feature === 'RD')).toHaveLength(2);
+    expect(s.symbols.filter(x => x.feature === 'E')).toHaveLength(2);
+    expect(s.circles).toHaveLength(1);
+    expect(d.tin!.nBreakEdges).toBeGreaterThan(80); // 溪流水線 85 點
+    expect(d.tin!.warning).toBeNull();
+  });
   it('測量計算示範資料：導線、水準、手簿都能算且精度合理', () => {
     const t = computeTraverse(p.traverse, p.controls);
     expect(t.ok).toBe(true);
@@ -47,9 +57,9 @@ describe('示範專案完整流程', () => {
   });
   it('DXF 匯出可被自己的讀取器讀回，並輸出報表', () => {
     const g = gridEarthwork(p.boundary!, 20, d.tin!.sample, flatSurface(730));
-    const dxf = buildDxf(p, d, g, { points: true, labels: true, tin: true, contours: true, boundary: true, alignment: true, stakes: true, grid: true, textHeight: 1 });
+    const dxf = buildDxf(p, d, g, { sam: true, points: true, labels: true, tin: true, contours: true, boundary: true, alignment: true, stakes: true, grid: true, textHeight: 1 });
     const back = parseDxf(dxf);
-    for (const L of ['POINTS', 'CONT1', 'CONT5', 'TIN', 'AXIS', 'STAKE', 'BOUNDARY', 'GRID_CUT']) expect(back.layers.has(L)).toBe(true);
+    for (const L of ['POINTS', 'CONT1', 'CONT5', 'TIN', 'AXIS', 'STAKE', 'BOUNDARY', 'GRID_CUT', 'SAM_BLDG', 'SAM_RIVER', 'SAM_POLE']) expect(back.layers.has(L)).toBe(true);
     if (process.env.EXPORT_DIR) {
       writeFileSync(`${process.env.EXPORT_DIR}/demo.dxf`, dxf);
       writeFileSync(`${process.env.EXPORT_DIR}/volume.csv`, volumeCsv(p, d));

@@ -71,9 +71,11 @@ export function ProjectPanel({ p, toast, refit, setGrid }: PanelCtx) {
         </div>
         <Note>資料只存在你這台電腦的瀏覽器裡，不會上傳。清除瀏覽器資料會一併刪除，重要的專案請定期「下載專案檔」備份。</Note>
       </Card>
-      <Card title="操作流程">
+      <Card title="操作流程" extra={<span className="badge">第一次使用？請按右上角「範例教學」</span>}>
         <ol className="flow">
+          <li><b>測量計算</b>：控制點、觀測手簿、導線、水準、交會、座標轉換</li>
           <li><b>測點</b>：匯入 CSV／TXT 點檔或 DXF 地形圖</li>
+          <li><b>自動連線</b>：依連線代碼畫出房屋、道路等地物，地形線當作斷線</li>
           <li><b>地形</b>：設定邊界，產生三角網與等高線</li>
           <li><b>方格土方</b>：整地挖填計算</li>
           <li><b>平曲線</b>：座標法、偏角法或在圖上定線，產生里程樁</li>
@@ -184,7 +186,7 @@ export function TerrainPanel(c: PanelCtx) {
       <Card title="圖層">
         <div className="chk-grid">
           {L('points', '測點')}{L('labels', '高程標註')}{L('tin', '三角網')}{L('contours', '等高線')}
-          {L('contourLabels', '等高線高程')}{L('boundary', '邊界')}{L('alignment', '中心線')}{L('stakes', '樁號')}{L('grid', '方格土方')}
+          {L('contourLabels', '等高線高程')}{L('sam', '自動連線地物')}{L('boundary', '邊界')}{L('alignment', '中心線')}{L('stakes', '樁號')}{L('grid', '方格土方')}
         </div>
       </Card>
     </>
@@ -599,7 +601,7 @@ export function SectionPanel(c: PanelCtx) {
 // ---------------- 匯出 ----------------
 export function ExportPanel(c: PanelCtx) {
   const { p, d, grid } = c;
-  const [o, setO] = useState<DxfLayersOpt>({ points: true, labels: true, tin: false, contours: true, boundary: true, alignment: true, stakes: true, grid: !!grid, textHeight: 1 });
+  const [o, setO] = useState<DxfLayersOpt>({ sam: true, points: true, labels: true, tin: false, contours: true, boundary: true, alignment: true, stakes: true, grid: !!grid, textHeight: 1 });
   const L = (k: keyof Omit<DxfLayersOpt, 'textHeight'>, label: string, disabled = false) => (
     <Check id={`dx-${k}`} label={label + (disabled ? '（無資料）' : '')} checked={o[k] && !disabled} onChange={v => setO({ ...o, [k]: v })} />
   );
@@ -608,13 +610,13 @@ export function ExportPanel(c: PanelCtx) {
     <>
       <Card title="AutoCAD 圖檔 DXF">
         <div className="chk-grid">
-          {L('points', '測點 POINTS')}{L('labels', '點號與高程文字')}{L('contours', '等高線 CONT1/CONT5', !d.contours.length)}
+          {L('sam', '自動連線地物 SAM_*', !d.sam)}{L('points', '測點 POINTS')}{L('labels', '點號與高程文字')}{L('contours', '等高線 CONT1/CONT5', !d.contours.length)}
           {L('tin', '三角網 TIN（3DFACE）', !d.tin)}{L('boundary', '邊界', !p.boundary)}{L('alignment', '中心線 AXIS', !d.alignment)}
           {L('stakes', '樁號 STAKE', !d.alignment)}{L('grid', '方格土方', !grid)}
         </div>
         <NumField id="dx-th" label="文字高度" value={o.textHeight} unit="m" min={0.05} onChange={v => setO({ ...o, textHeight: v })} />
         <Btn kind="primary" wide onClick={() => download(`${base}_${stamp()}.dxf`, buildDxf(p, d, grid, {
-          ...o, contours: o.contours && d.contours.length > 0, tin: o.tin && !!d.tin, boundary: o.boundary && !!p.boundary,
+          ...o, sam: o.sam && !!d.sam, contours: o.contours && d.contours.length > 0, tin: o.tin && !!d.tin, boundary: o.boundary && !!p.boundary,
           alignment: o.alignment && !!d.alignment, stakes: o.stakes && !!d.alignment, grid: o.grid && !!grid,
         }), 'application/dxf')}>下載 DXF</Btn>
         <p className="hint">AutoCAD R12 格式，各類圖元分圖層，任何版本的 AutoCAD 都能開啟。</p>

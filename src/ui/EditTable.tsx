@@ -4,8 +4,9 @@ import { useRef, useState } from 'react';
 export interface Col<T> {
   key: keyof T & string;
   label: string;
-  /** num：數字（空白存 null 或 0）；text：文字（含 ddd.mmss 角度） */
-  type: 'num' | 'text';
+  /** num：數字（空白存 null 或 0）；text：文字（含 ddd.mmss 角度）；select：下拉；bool：勾選；color：顏色 */
+  type: 'num' | 'text' | 'select' | 'bool' | 'color';
+  options?: Array<[string, string]>;
   /** 數字欄允許空白（存 null） */
   nullable?: boolean;
   digits?: number;
@@ -35,7 +36,8 @@ export function EditTable<T extends object>(props: {
     return String(v);
   };
   const parse = (c: Col<T>, text: string): unknown => {
-    if (c.type === 'text') return text.trim();
+    if (c.type === 'bool') return /^(1|true|y|yes|是|v|✓)$/i.test(text.trim());
+    if (c.type !== 'num') return text.trim();
     const t = text.trim().replace(/,/g, '');
     if (t === '') return c.nullable ? null : 0;
     const v = Number(t);
@@ -96,7 +98,15 @@ export function EditTable<T extends object>(props: {
               <td className="muted">{r + 1}</td>
               {cols.map((c, ci) => (
                 <td key={c.key}>
-                  <input
+                  {c.type === 'select' ? (
+                    <select aria-label={c.label} value={String(row[c.key] ?? '')} onChange={e => { const n = rows.slice(); n[r] = { ...row, [c.key]: e.target.value }; onChange(n); }}>
+                      {c.options!.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                    </select>
+                  ) : c.type === 'bool' ? (
+                    <input type="checkbox" aria-label={c.label} checked={!!row[c.key]} onChange={e => { const n = rows.slice(); n[r] = { ...row, [c.key]: e.target.checked }; onChange(n); }} />
+                  ) : c.type === 'color' ? (
+                    <input type="color" aria-label={c.label} className="cell-color" value={String(row[c.key] ?? '#ffffff')} onChange={e => { const n = rows.slice(); n[r] = { ...row, [c.key]: e.target.value }; onChange(n); }} />
+                  ) : <input
                     className="cell" data-r={r} data-c={ci} type="text"
                     inputMode={c.type === 'num' ? 'decimal' : undefined}
                     style={c.width ? { width: c.width, minWidth: c.width } : undefined}
@@ -116,7 +126,7 @@ export function EditTable<T extends object>(props: {
                         e.preventDefault(); (e.target as HTMLInputElement).blur(); focusCell(r - 1, ci);
                       }
                     }}
-                  />
+                  />}
                 </td>
               ))}
               {props.extra?.map(x => <td key={x.label}>{x.render(row, r)}</td>)}

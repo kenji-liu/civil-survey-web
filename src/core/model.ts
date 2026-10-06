@@ -6,6 +6,7 @@ import type { SectionTemplate } from './section';
 import type { ControlPoint, Station } from './survey';
 import type { TraverseInput } from './traverse';
 import type { LevelInput } from './leveling';
+import { DEFAULT_LEGEND, type LegendItem } from './sam';
 
 export interface SurveyPoint {
   id: number;
@@ -61,6 +62,10 @@ export interface Project {
   transform: { pairs: Array<{ name: string; fx: number; fy: number; tx: number; ty: number }>; fixScale: boolean; dz: number };
   /** 縱斷面原地面來源：三角網或水準測量 */
   profileGround: { source: 'tin' | 'level'; pts: Array<{ sta: number; z: number }> };
+  // ---- 第三版：自動連線成圖 ----
+  /** 圖例庫（地類碼 → 名稱、圖層、線型、是否為斷線） */
+  legend: LegendItem[];
+  sam: { enabled: boolean; useBreaklines: boolean };
 }
 
 export function isValidZ(z: number | null | undefined, rule: ZRule): z is number {
@@ -100,6 +105,8 @@ export function newProject(name = '未命名工程'): Project {
     level: { startZ: 0, endMode: 'known', endZ: 0, tolC: 20, rows: [] },
     transform: { pairs: [], fixScale: true, dz: 0 },
     profileGround: { source: 'tin', pts: [] },
+    legend: DEFAULT_LEGEND.map(l => ({ ...l })),
+    sam: { enabled: true, useBreaklines: true },
   };
 }
 
@@ -125,5 +132,7 @@ export function normalizeProject(p: Partial<Project>): Project {
     level: { ...base.level, ...p.level },
     transform: { ...base.transform, ...p.transform },
     profileGround: { ...base.profileGround, ...p.profileGround },
+    legend: p.legend?.length ? p.legend : base.legend,
+    sam: { ...base.sam, ...p.sam },
   } as Project;
 }

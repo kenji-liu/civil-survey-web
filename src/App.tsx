@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { XY } from './core/geom';
 import { nextPointId } from './core/model';
 import type { GridResult } from './core/earthwork-grid';
@@ -17,10 +17,15 @@ import { computeSurvey } from './core/survey';
 import { computeTraverse } from './core/traverse';
 import { computeLeveling } from './core/leveling';
 import type { Overlay } from './ui/PlanView';
+import { SamPanel, SamDrawer } from './ui/sam-ui';
+import { Guide, type GuideNav } from './ui/Guide';
 
-type Tab = 'project' | 'survey' | 'points' | 'terrain' | 'grid' | 'alignment' | 'profile' | 'section' | 'export';
+// 3D 檢視用到 Three.js（約 150 KB），點開時才下載
+const Terrain3D = lazy(() => import('./ui/Terrain3D'));
+
+type Tab = 'project' | 'survey' | 'points' | 'sam' | 'terrain' | 'grid' | 'alignment' | 'profile' | 'section' | 'export';
 const TABS: Array<[Tab, string]> = [
-  ['project', '專案'], ['survey', '測量計算'], ['points', '測點'], ['terrain', '地形'], ['grid', '方格土方'],
+  ['project', '專案'], ['survey', '測量計算'], ['points', '測點'], ['sam', '自動連線'], ['terrain', '地形'], ['grid', '方格土方'],
   ['alignment', '平曲線'], ['profile', '縱斷面'], ['section', '橫斷面'], ['export', '匯出'],
 ];
 
@@ -38,7 +43,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('project');
   const [tool, setToolState] = useState<Tool>('pan');
   const [draft, setDraft] = useState<XY[]>([]);
-  const [layers, setLayers] = useState<Layers>({ points: true, labels: true, tin: false, contours: true, contourLabels: true, boundary: true, alignment: true, stakes: true, grid: true });
+  const [layers, setLayers] = useState<Layers>({ points: true, labels: true, tin: false, contours: true, contourLabels: true, boundary: true, alignment: true, stakes: true, grid: true, sam: true });
   const [grid, setGrid] = useState<GridResult | null>(null);
   const [selectedSta, setSelectedSta] = useState<number | null>(null);
   const [highlight, setHighlight] = useState<number | null>(null);
@@ -51,6 +56,8 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [sideOpen, setSideOpen] = useState(true);
   const [surveyTool, setSurveyTool] = useState<SurveyTool>('ctl');
+  const [view3d, setView3d] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [stationIdx, setStationIdx] = useState(0);
   const toastId = useRef(0);
 
@@ -72,7 +79,7 @@ export default function App() {
     if (booted.current) return;
     booted.current = true;
     loadSaved().then(found => {
-      if (!found) { replaceProject(demoProject()); toast('第一次使用：已載入示範資料，可在「專案」頁建立新專案', 'ok'); }
+      if (!found) { replaceProject(demoProject()); setGuideOpen(true); toast('第一次使用：已載入示範資料，可以跟著「範例教學」操作', 'ok'); }
       refit();
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -167,6 +174,7 @@ export default function App() {
   const drawer = (() => {
     switch (tab) {
       case 'survey': return SurveyDrawer(sctx);
+      case 'sam': return { title: '圖例庫（地類碼對照）', body: <SamDrawer p={p} d={d} /> };
       case 'points': return { title: '測點座標表', body: <PointTable p={p} highlight={highlight} onPick={id => setHighlight(id)} /> };
       case 'grid': return { title: '方格法計算表', body: <GridTable g={grid} /> };
       case 'alignment': return { title: '樁號座標表', body: <StakeTable d={d} selected={selectedSta} onSelect={setSelectedSta} /> };
@@ -190,7 +198,7 @@ export default function App() {
     }
   })();
 
-  const Panel = { project: ProjectPanel, survey: ProjectPanel, points: PointsPanel, terrain: TerrainPanel, grid: GridPanel, alignment: AlignmentPanel, profile: ProfilePanel, section: SectionPanel, export: ExportPanel }[tab];
+  const Panel = { project: ProjectPanel, survey: ProjectPanel, sam: ProjectPanel, points: PointsPanel, terrain: TerrainPanel, grid: GridPanel, alignment: AlignmentPanel, profile: ProfilePanel, section: SectionPanel, export: ExportPanel }[tab];
 
   return (
     <div className="app">
@@ -210,6 +218,7 @@ export default function App() {
           ))}
         </nav>
         <div className="top-actions">
+          <button type="button" className="guide-btn" onClick={() => setGuideOpen(true)}>範例教學</button>
           <button type="button" className="icon-btn" onClick={undo} title="復原（Ctrl+Z）" aria-label="復原">↶</button>
           <button type="button" className="icon-btn" onClick={redo} title="重做（Ctrl+Y）" aria-label="重做">↷</button>
         </div>
@@ -220,26 +229,32 @@ export default function App() {
             <h2>{TABS.find(t => t[0] === tab)![1]}</h2>
             <button type="button" className="icon-btn" onClick={() => setSideOpen(false)} aria-label="收合面板" title="收合面板">⟨</button>
           </div>
-          <div className="side-body" key={tab === 'survey' ? `survey-${surveyTool}` : tab}>{tab === 'survey' ? <SurveyPanel {...sctx} /> : <Panel {...ctx} />}</div>
+          <div className="side-body" key={tab === 'survey' ? `survey-${surveyTool}` : tab}>{tab === 'survey' ? <SurveyPanel {...sctx} /> : tab === 'sam' ? <SamPanel p={p} d={d} toast={toast} /> : <Panel {...ctx} />}</div>
         </aside>
         {!sideOpen && <button type="button" className="side-reopen" onClick={() => setSideOpen(true)} aria-label="展開面板">⟩</button>}
         <div className="stage">
           <div className="plan">
             <PlanView
               points={p.points} zRule={p.zRule} tin={d.tin} contours={layers.contours ? d.contours : []} boundary={p.boundary}
-              controls={p.controls} overlays={overlays}
+              controls={p.controls} overlays={overlays} sam={d.sam} legend={p.legend}
               alignment={d.alignment} grid={grid} layers={layers} tool={tool} draft={draft} selectedSta={selectedSta}
               highlightPoint={highlight} fitKey={fitKey}
               onWorldClick={onWorldClick} onFinishDraft={finishDraft} onCancelDraft={() => { setDraft([]); setToolState('pan'); }}
               onCursor={(w, z) => setCursor(w ? { p: w, z } : null)}
               onPickPoint={id => { setHighlight(id); if (id !== null && tab !== 'points') { const pt = p.points.find(t => t.id === id); if (pt) toast(`點 ${pt.name}：E ${pt.x.toFixed(3)}  N ${pt.y.toFixed(3)}  Z ${pt.z === null ? '無高程' : pt.z.toFixed(3)}`); } }}
             />
+            {!view3d && <button type="button" className="btn primary btn-3d" onClick={() => { if (d.tin) setView3d(true); else toast('沒有三角網，無法顯示 3D 地形', 'warn'); }} title="3D 地形模擬">3D</button>}
+            {view3d && d.tin && (
+              <Suspense fallback={<div className="view3d"><div className="empty">載入 3D 引擎中…</div></div>}>
+                <Terrain3D tin={d.tin} alignment={d.alignment} profile={d.profile} sam={d.sam} legend={p.legend} controls={p.controls} onClose={() => setView3d(false)} />
+              </Suspense>
+            )}
             {tool !== 'pan' && <div className="tool-banner">{TOOL_HINT[tool]}{draft.length > 0 && `（已點 ${draft.length} 點）`}</div>}
-            <div className="legend">
+            {!view3d && <div className="legend">
               <span><i className="lg pt" />測點</span><span><i className="lg null" />無高程</span>
               <span><i className="lg cont" />等高線</span><span><i className="lg axis" />中心線</span>
               {grid && <><span><i className="lg cut" />挖方</span><span><i className="lg fill" />填方</span></>}
-            </div>
+            </div>}
           </div>
           {drawer && (
             <section className={`drawer ${drawerOpen ? '' : 'closed'}`}>
@@ -262,6 +277,14 @@ export default function App() {
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map(t => <div key={t.id} className={`toast ${t.tone ?? ''}`}>{t.msg}</div>)}
       </div>
+      {guideOpen && (
+        <Guide onClose={() => setGuideOpen(false)} go={(nav: GuideNav, demo: boolean) => {
+          if (demo) { replaceProject(demoProject()); setGrid(null); setSelectedSta(null); refit(); }
+          setTab(nav.tab as Tab);
+          if (nav.sub) setSurveyTool(nav.sub as SurveyTool);
+          setSideOpen(true); setView3d(false); setGuideOpen(false);
+        }} />
+      )}
       {dxf && (
         <DxfDialog fileName={dxf.name} data={dxf.data} zRule={p.zRule} onCancel={() => setDxf(null)}
           onImport={pts => {
