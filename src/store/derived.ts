@@ -27,22 +27,40 @@ export function validPoints(p: Project): Pt3[] {
   return p.points.filter(q => isValidZ(q.z, p.zRule)).map(q => ({ x: q.x, y: q.y, z: q.z as number }));
 }
 
-export function groundLineOf(al: Alignment | null, tin: Tin | null) {
-  if (!al || !tin) return [];
+/** 縱斷面地面高：三角網取樣，或依水準測量成果（樁號→高程）內插 */
+export type GroundFn = (sta: number, x: number, y: number) => number | null;
+
+export function groundFnOf(tin: Tin | null, pg: Project['profileGround']): GroundFn | null {
+  if (pg.source === 'level' && pg.pts.length >= 2) {
+    const pts = [...pg.pts].sort((a, b) => a.sta - b.sta);
+    return sta => {
+      if (sta < pts[0].sta - 1e-6 || sta > pts[pts.length - 1].sta + 1e-6) return null;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        if (sta <= b.sta + 1e-9) return b.sta === a.sta ? a.z : a.z + ((sta - a.sta) / (b.sta - a.sta)) * (b.z - a.z);
+      }
+      return pts[pts.length - 1].z;
+    };
+  }
+  return tin ? (_s, x, y) => tin.sample(x, y) : null;
+}
+
+export function groundLineOf(al: Alignment | null, g: GroundFn | null) {
+  if (!al || !g) return [];
   const out: Array<{ sta: number; z: number | null }> = [];
   const step = Math.max(0.5, al.length / 600);
   for (let s = al.startStation; s <= al.endStation + 1e-6; s += step) {
     const sta = Math.min(s, al.endStation);
     const q = al.pointAt(sta)!;
-    out.push({ sta, z: tin.sample(q.x, q.y) });
+    out.push({ sta, z: g(sta, q.x, q.y) });
   }
   return out;
 }
 
-export function stakeRowsOf(al: Alignment | null, tin: Tin | null, profile: Profile): StakeRow[] {
+export function stakeRowsOf(al: Alignment | null, g: GroundFn | null, profile: Profile): StakeRow[] {
   if (!al) return [];
   return al.stakes.map(stake => {
-    const ground = tin ? tin.sample(stake.x, stake.y) : null;
+    const ground = g ? g(stake.sta, stake.x, stake.y) : null;
     const design = profile.elevAt(stake.sta);
     return { stake, ground, design, dh: ground !== null && design !== null ? ground - design : null };
   });
@@ -81,11 +99,12 @@ export function computeDerived(p: Project): Derived {
   const contours = tin ? traceContours(tin, p.contour.interval, p.contour.majorEvery) : [];
   const alignment = p.alignment ? buildAlignment(p.alignment) : null;
   const profile = buildProfile(p.vpis);
-  const stakeRows = stakeRowsOf(alignment, tin, profile);
+  const g = groundFnOf(tin, p.profileGround);
+  const stakeRows = stakeRowsOf(alignment, g, profile);
   const sections = sectionsOf(alignment, stakeRows, tin, p);
   return {
     validCount: valid.length, nullCount: p.points.length - valid.length,
-    tin, contours, alignment, profile, groundLine: groundLineOf(alignment, tin), stakeRows, sections, volumes: volumesOf(sections),
+    tin, contours, alignment, profile, groundLine: groundLineOf(alignment, g), stakeRows, sections, volumes: volumesOf(sections),
   };
 }
 
@@ -95,8 +114,9 @@ export function useDerived(p: Project): Derived {
   const contours = useMemo(() => (tin ? traceContours(tin, p.contour.interval, p.contour.majorEvery) : []), [tin, p.contour.interval, p.contour.majorEvery]);
   const alignment = useMemo(() => (p.alignment ? buildAlignment(p.alignment) : null), [p.alignment]);
   const profile = useMemo(() => buildProfile(p.vpis), [p.vpis]);
-  const groundLine = useMemo(() => groundLineOf(alignment, tin), [alignment, tin]);
-  const stakeRows = useMemo(() => stakeRowsOf(alignment, tin, profile), [alignment, tin, profile]);
+  const g = useMemo(() => groundFnOf(tin, p.profileGround), [tin, p.profileGround]);
+  const groundLine = useMemo(() => groundLineOf(alignment, g), [alignment, g]);
+  const stakeRows = useMemo(() => stakeRowsOf(alignment, g, profile), [alignment, g, profile]);
   const sections = useMemo(() => sectionsOf(alignment, stakeRows, tin, { sectionSample: p.sectionSample, template: p.template }), [alignment, stakeRows, tin, p.sectionSample, p.template]);
   const volumes = useMemo(() => volumesOf(sections), [sections]);
   return {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { XY } from './core/geom';
 import { nextPointId } from './core/model';
 import type { GridResult } from './core/earthwork-grid';
@@ -12,10 +12,15 @@ import { PointTable, StakeTable, VolumeTable, GridTable } from './ui/tables';
 import { ProjectPanel, PointsPanel, TerrainPanel, GridPanel, AlignmentPanel, ProfilePanel, SectionPanel, ExportPanel, type PanelCtx } from './ui/panels';
 import { decodeDxf, parseDxf, type DxfData } from './io/dxf-read';
 import { APP_NAME, APP_SHORT, APP_VERSION } from './config';
+import { SurveyPanel, SurveyDrawer, type SurveyTool, type SurveyCtx } from './ui/survey-ui';
+import { computeSurvey } from './core/survey';
+import { computeTraverse } from './core/traverse';
+import { computeLeveling } from './core/leveling';
+import type { Overlay } from './ui/PlanView';
 
-type Tab = 'project' | 'points' | 'terrain' | 'grid' | 'alignment' | 'profile' | 'section' | 'export';
+type Tab = 'project' | 'survey' | 'points' | 'terrain' | 'grid' | 'alignment' | 'profile' | 'section' | 'export';
 const TABS: Array<[Tab, string]> = [
-  ['project', '專案'], ['points', '測點'], ['terrain', '地形'], ['grid', '方格土方'],
+  ['project', '專案'], ['survey', '測量計算'], ['points', '測點'], ['terrain', '地形'], ['grid', '方格土方'],
   ['alignment', '平曲線'], ['profile', '縱斷面'], ['section', '橫斷面'], ['export', '匯出'],
 ];
 
@@ -45,7 +50,14 @@ export default function App() {
   const [defaultRadius, setDefaultRadius] = useState(30);
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [sideOpen, setSideOpen] = useState(true);
+  const [surveyTool, setSurveyTool] = useState<SurveyTool>('ctl');
+  const [stationIdx, setStationIdx] = useState(0);
   const toastId = useRef(0);
+
+  // 測量計算結果（輸入變動時重算）
+  const survey = useMemo(() => computeSurvey(p.stations, p.controls), [p.stations, p.controls]);
+  const trav = useMemo(() => computeTraverse(p.traverse, p.controls), [p.traverse, p.controls]);
+  const lev = useMemo(() => computeLeveling(p.level), [p.level]);
 
   const toast = useCallback((msg: string, tone?: 'ok' | 'warn') => {
     const id = ++toastId.current;
@@ -135,8 +147,26 @@ export default function App() {
     newPointZ, setNewPointZ, defaultRadius, setDefaultRadius,
   };
 
+  const sctx: SurveyCtx = { p, tool: surveyTool, setTool: setSurveyTool, survey, trav, lev, stationIdx: Math.min(stationIdx, Math.max(0, p.stations.length - 1)), setStationIdx, toast, refit };
+
+  // 平面圖疊加：測量計算頁顯示導線、觀測方向
+  const overlays = useMemo<Overlay[]>(() => {
+    if (tab !== 'survey') return [];
+    if (surveyTool === 'trav' && trav.ok) return [{ pts: trav.points, color: '#ffe066', width: 2, labels: trav.points.map(q => q.name) }];
+    if (surveyTool === 'book') {
+      const out: Overlay[] = [];
+      for (const st of survey.stations) {
+        if (!st.ok || st.x === undefined) continue;
+        for (const q of survey.points.filter(t => t.station === st.name)) out.push({ pts: [{ x: st.x, y: st.y! }, q], color: 'rgba(255,224,102,0.35)', width: 1 });
+      }
+      return out;
+    }
+    return [];
+  }, [tab, surveyTool, trav, survey]);
+
   const drawer = (() => {
     switch (tab) {
+      case 'survey': return SurveyDrawer(sctx);
       case 'points': return { title: '測點座標表', body: <PointTable p={p} highlight={highlight} onPick={id => setHighlight(id)} /> };
       case 'grid': return { title: '方格法計算表', body: <GridTable g={grid} /> };
       case 'alignment': return { title: '樁號座標表', body: <StakeTable d={d} selected={selectedSta} onSelect={setSelectedSta} /> };
@@ -160,7 +190,7 @@ export default function App() {
     }
   })();
 
-  const Panel = { project: ProjectPanel, points: PointsPanel, terrain: TerrainPanel, grid: GridPanel, alignment: AlignmentPanel, profile: ProfilePanel, section: SectionPanel, export: ExportPanel }[tab];
+  const Panel = { project: ProjectPanel, survey: ProjectPanel, points: PointsPanel, terrain: TerrainPanel, grid: GridPanel, alignment: AlignmentPanel, profile: ProfilePanel, section: SectionPanel, export: ExportPanel }[tab];
 
   return (
     <div className="app">
@@ -190,13 +220,14 @@ export default function App() {
             <h2>{TABS.find(t => t[0] === tab)![1]}</h2>
             <button type="button" className="icon-btn" onClick={() => setSideOpen(false)} aria-label="收合面板" title="收合面板">⟨</button>
           </div>
-          <div className="side-body"><Panel {...ctx} /></div>
+          <div className="side-body" key={tab === 'survey' ? `survey-${surveyTool}` : tab}>{tab === 'survey' ? <SurveyPanel {...sctx} /> : <Panel {...ctx} />}</div>
         </aside>
         {!sideOpen && <button type="button" className="side-reopen" onClick={() => setSideOpen(true)} aria-label="展開面板">⟩</button>}
         <div className="stage">
           <div className="plan">
             <PlanView
               points={p.points} zRule={p.zRule} tin={d.tin} contours={layers.contours ? d.contours : []} boundary={p.boundary}
+              controls={p.controls} overlays={overlays}
               alignment={d.alignment} grid={grid} layers={layers} tool={tool} draft={draft} selectedSta={selectedSta}
               highlightPoint={highlight} fitKey={fitKey}
               onWorldClick={onWorldClick} onFinishDraft={finishDraft} onCancelDraft={() => { setDraft([]); setToolState('pan'); }}

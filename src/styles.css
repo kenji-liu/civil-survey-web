@@ -53,8 +53,8 @@ button, input, select { font: inherit; color: inherit; }
 .side-head h2 { margin: 0; font-size: 15px; }
 .side-body { overflow-y: auto; padding: 4px 12px 24px; display: flex; flex-direction: column; gap: 12px; }
 .side-reopen { position: absolute; left: 0; top: 50%; z-index: 5; background: var(--panel-2); border: 1px solid var(--line); border-left: 0; padding: 14px 4px; cursor: pointer; color: var(--cyan); }
-.stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.plan { flex: 1; position: relative; min-height: 200px; }
+.stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.plan { flex: 1; position: relative; min-height: 140px; }
 .planview { position: absolute; inset: 0; outline: none; touch-action: none; }
 .planview canvas { display: block; }
 .plan-tools { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 4px; }
@@ -73,7 +73,7 @@ button, input, select { font: inherit; color: inherit; }
 .tool-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(255,224,102,.12); border: 1px solid #ffe066; color: #ffe066; padding: 6px 14px; font-size: 12px; pointer-events: none; max-width: calc(100% - 120px); }
 
 /* 下方抽屜 */
-.drawer { height: 300px; background: var(--panel); border-top: 1px solid var(--line-2); display: flex; flex-direction: column; min-height: 0; }
+.drawer { height: min(300px, 46%); background: var(--panel); border-top: 1px solid var(--line-2); display: flex; flex-direction: column; min-height: 0; }
 .drawer.closed { height: auto; }
 .drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: var(--header); border-bottom: 1px solid var(--line); }
 .drawer-head h3 { margin: 0; font-size: 12px; color: var(--amber); }
@@ -211,3 +211,11 @@ button, input, select { font: inherit; color: inherit; }
   .modal-body { grid-template-columns: 1fr; }
   .status .hint-txt { display: none; }
 }
+
+/* 第二版：測量計算 */
+.seg.seg-6 { grid-template-columns: repeat(3, 1fr); }
+.seg.seg-6 button { border-bottom: 1px solid var(--line); }
+.tbl tr.add-row td { text-align: left; padding: 6px; cursor: default; }
+.tbl tr.add-row:hover td { background: none; }
+.tbl.edit td .x { padding: 0 2px; }
+code { font: 11px var(--mono); color: var(--amber); background: var(--header); padding: 0 3px; }

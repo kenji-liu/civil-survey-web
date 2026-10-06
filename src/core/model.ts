@@ -3,6 +3,9 @@ import type { XY } from './geom';
 import type { AlignmentInput } from './alignment';
 import type { VPI } from './profile';
 import type { SectionTemplate } from './section';
+import type { ControlPoint, Station } from './survey';
+import type { TraverseInput } from './traverse';
+import type { LevelInput } from './leveling';
 
 export interface SurveyPoint {
   id: number;
@@ -47,6 +50,17 @@ export interface Project {
   template: SectionTemplate;
   /** 橫斷面取樣：左右各取多寬、取樣間距 */
   sectionSample: { halfWidth: number; step: number };
+  // ---- 第二版：測量計算 ----
+  /** 控制點資料庫（已知點、轉站點） */
+  controls: ControlPoint[];
+  /** 外業觀測手簿 */
+  stations: Station[];
+  traverse: TraverseInput;
+  level: LevelInput;
+  /** 座標轉換對應點：原座標 (fx, fy) → 新座標 (tx, ty) */
+  transform: { pairs: Array<{ name: string; fx: number; fy: number; tx: number; ty: number }>; fixScale: boolean; dz: number };
+  /** 縱斷面原地面來源：三角網或水準測量 */
+  profileGround: { source: 'tin' | 'level'; pts: Array<{ sta: number; z: number }> };
 }
 
 export function isValidZ(z: number | null | undefined, rule: ZRule): z is number {
@@ -80,6 +94,12 @@ export function newProject(name = '未命名工程'): Project {
     vpis: [],
     template: { widthL: 3.5, widthR: 3.5, crossfall: 2, cutSlope: 0.5, fillSlope: 1.5, ditchWidth: 0.6, ditchDepth: 0.4 },
     sectionSample: { halfWidth: 30, step: 1 },
+    controls: [],
+    stations: [],
+    traverse: { type: 'link-4', startAz: '0', backsight: '', foresight: '', rows: [] },
+    level: { startZ: 0, endMode: 'known', endZ: 0, tolC: 20, rows: [] },
+    transform: { pairs: [], fixScale: true, dz: 0 },
+    profileGround: { source: 'tin', pts: [] },
   };
 }
 
@@ -99,5 +119,11 @@ export function normalizeProject(p: Partial<Project>): Project {
     sectionSample: { ...base.sectionSample, ...p.sectionSample },
     points: p.points ?? [],
     vpis: p.vpis ?? [],
+    controls: p.controls ?? [],
+    stations: p.stations ?? [],
+    traverse: { ...base.traverse, ...p.traverse },
+    level: { ...base.level, ...p.level },
+    transform: { ...base.transform, ...p.transform },
+    profileGround: { ...base.profileGround, ...p.profileGround },
   } as Project;
 }

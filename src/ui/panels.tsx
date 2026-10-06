@@ -478,6 +478,16 @@ export function ProfilePanel(c: PanelCtx) {
   };
   return (
     <>
+      <Card title="原地面資料">
+        <label className="field" htmlFor="pg-src">
+          <span className="field-label">縱斷面地面高來源</span>
+          <select id="pg-src" value={p.profileGround.source} onChange={e => patch('profileGround', { ...p.profileGround, source: e.target.value as 'tin' | 'level' })}>
+            <option value="tin">由三角網切取</option>
+            <option value="level" disabled={p.profileGround.pts.length < 2}>水準測量成果（{p.profileGround.pts.length} 樁）</option>
+          </select>
+        </label>
+        <p className="hint">水準成果由「測量計算 → 水準」寫入，樁號之間以直線內插。橫斷面仍由三角網切取。</p>
+      </Card>
       <Card title="縱坡交點 VPI">
         {!al && <Note tone="warn">請先在「平曲線」頁建立中心線。</Note>}
         <div className="table-wrap">

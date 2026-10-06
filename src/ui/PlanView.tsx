@@ -16,8 +16,13 @@ export interface Layers {
   boundary: boolean; alignment: boolean; stakes: boolean; grid: boolean;
 }
 
+/** 疊加線：導線、觀測方向等 */
+export interface Overlay { pts: XY[]; color: string; width?: number; dash?: boolean; labels?: string[] }
+
 export interface PlanViewProps {
   points: SurveyPoint[];
+  controls: Array<{ name: string; x: number; y: number }>;
+  overlays: Overlay[];
   zRule: ZRule;
   tin: Tin | null;
   contours: ContourLine[];
@@ -69,12 +74,13 @@ export function PlanView(props: PlanViewProps) {
   const fit = useCallback(() => {
     const pts: XY[] = [];
     for (const p of props.points) pts.push(p);
+    for (const c of props.controls) pts.push(c);
     if (props.boundary) pts.push(...props.boundary);
     if (props.alignment) props.alignment.input.ips.forEach(p => pts.push(p));
     const b = boundsOf(pts);
     if (!b) return;
     setView(fitBounds(b, size.w, size.h));
-  }, [props.points, props.boundary, props.alignment, size.w, size.h]);
+  }, [props.points, props.controls, props.boundary, props.alignment, size.w, size.h]);
 
   // fitKey 改變（載入新資料）時縮放到全圖
   useEffect(() => { fit(); }, [props.fitKey, size.w > 0 && size.h > 0]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -365,6 +371,32 @@ function draw(ctx: CanvasRenderingContext2D, p: PlanViewProps, v: View, W: numbe
           ctx.fillText(t, 0, 3); ctx.restore(); ctx.textAlign = 'start';
         }
       });
+    }
+  }
+
+  // 疊加線
+  for (const o of p.overlays) {
+    if (o.pts.length < 2) continue;
+    ctx.strokeStyle = o.color; ctx.lineWidth = o.width ?? 1.5;
+    if (o.dash) ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    o.pts.forEach((q, i) => (i ? ctx.lineTo(X(q.x), Y(q.y)) : ctx.moveTo(X(q.x), Y(q.y))));
+    ctx.stroke(); ctx.setLineDash([]);
+    if (o.labels) {
+      ctx.fillStyle = o.color; ctx.font = '600 11px "JetBrains Mono", monospace';
+      o.pts.forEach((q, i) => { if (o.labels![i]) { ctx.beginPath(); ctx.arc(X(q.x), Y(q.y), 3, 0, Math.PI * 2); ctx.fill(); ctx.fillText(o.labels![i], X(q.x) + 6, Y(q.y) + 14); } });
+    }
+  }
+
+  // 控制點（三角形）
+  if (p.controls.length) {
+    ctx.font = '600 11px "JetBrains Mono", monospace';
+    for (const c of p.controls) {
+      if (!inView(c.x, c.y)) continue;
+      const sx = X(c.x), sy = Y(c.y);
+      ctx.strokeStyle = '#ffe066'; ctx.lineWidth = 1.6; ctx.fillStyle = 'rgba(255,224,102,0.18)';
+      ctx.beginPath(); ctx.moveTo(sx, sy - 7); ctx.lineTo(sx + 6, sy + 4.5); ctx.lineTo(sx - 6, sy + 4.5); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#ffe066'; ctx.fillText(c.name, sx + 8, sy - 6);
     }
   }
 

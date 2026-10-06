@@ -78,7 +78,91 @@ export function demoProject(): Project {
     { sta: round(L * 0.45), z: round(zAt(L * 0.45) - 1.2), L: 60 },
     { sta: round(L), z: round(zAt(L) - 0.4), L: 0 },
   ];
+  addSurveyDemo(p, r, al);
   return p;
+}
+
+/** 測量計算示範：控制點、四已知點導線、觀測手簿、沿中心線的水準測量。觀測值由真實幾何反算再加微小誤差。 */
+function addSurveyDemo(p: Project, r: () => number, al: NonNullable<ReturnType<typeof buildAlignment>>) {
+  const P = (x: number, y: number) => ({ x: E0 + x, y: N0 + y, z: round(demoTerrain(x, y)) });
+  const K1 = P(20, 212), K2 = P(12, 286), K3 = P(402, 246), K4 = P(410, 302);
+  const T1 = P(140, 266), T2 = P(266, 220);
+  p.controls = [
+    { name: 'K1', ...K1 }, { name: 'K2', ...K2 }, { name: 'K3', ...K3 }, { name: 'K4', ...K4 },
+  ];
+  const noise = (s: number) => (r() - 0.5) * 2 * s;
+  const azDeg = (a: { x: number; y: number }, b: { x: number; y: number }) => ((Math.atan2(b.x - a.x, b.y - a.y) * 180 / Math.PI) + 360) % 360;
+  const dms = (deg: number) => {
+    deg = ((deg % 360) + 360) % 360;
+    let s = Math.round(deg * 3600);
+    const d = Math.floor(s / 3600); s -= d * 3600;
+    const m = Math.floor(s / 60); s -= m * 60;
+    return `${d}.${String(m).padStart(2, '0')}${String(s).padStart(2, '0')}`;
+  };
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(b.x - a.x, b.y - a.y);
+  // 導線 K2→[K1→T1→T2→K3]→K4，角度加 ±3″、距離加 ±3 mm 的誤差
+  const seq = [K2, K1, T1, T2, K3, K4];
+  const names = ['K1', 'T1', 'T2', 'K3'];
+  p.traverse = {
+    type: 'link-4', startAz: '0', backsight: 'K2', foresight: 'K4',
+    rows: names.map((name, i) => {
+      const prev = seq[i], cur = seq[i + 1], next = seq[i + 2];
+      const beta = azDeg(cur, next) - azDeg(cur, prev) + noise(3 / 3600);
+      return { name, angle: dms(beta), dist: i < 3 ? round(dist(cur, next) + noise(0.003)) : 0, dh: i < 3 ? round(next.z - cur.z + noise(0.004)) : null };
+    }),
+  };
+  // 觀測手簿：K1 後視 K2，觀測 10 個碎部點與轉站點 T1；再由 T1 後視 K1 觀測 6 點
+  const book = (st: typeof K1, stName: string, bs: typeof K1, bsName: string, targets: Array<{ x: number; y: number; name: string }>) => {
+    const hi = 1.5;
+    return {
+      name: stName, bs: bsName, hi, bsAngle: '0', mode: 'SD' as const,
+      obs: targets.map(t => {
+        const q = P(t.x, t.y);
+        const hd = dist(st, q), vd = q.z + 1.5 - (st.z + hi);
+        const sd = Math.hypot(hd, vd);
+        const zen = Math.acos(vd / sd) * 180 / Math.PI;
+        const hz = azDeg(st, q) - azDeg(st, bs);
+        return { name: t.name, ht: 1.5, hz: dms(hz + noise(2 / 3600)), v: dms(zen + noise(2 / 3600)), dist: round(sd + noise(0.002)), code: t.name.startsWith('T') ? '' : 'GND' };
+      }),
+    };
+  };
+  const ring = (cx: number, cy: number, n: number, rad: number, start: number) => Array.from({ length: n }, (_, k) => ({ x: cx + rad * Math.cos(k * 2 * Math.PI / n), y: cy + rad * Math.sin(k * 2 * Math.PI / n), name: String(start + k) }));
+  p.stations = [
+    book(K1, 'K1', K2, 'K2', [...ring(20, 212, 10, 28, 501), { x: 140, y: 266, name: 'T1' }]),
+    book(T1, 'T1', K1, 'K1', ring(140, 266, 6, 22, 601)),
+  ];
+  // 水準：K1 → 沿中心線各樁（中間視／轉點）→ K3
+  const stakes = al.stakes.map(s => ({ name: formatSta(s.sta), z: demoTerrain(s.x - E0, s.y - N0), x: s.x - E0, y: s.y - N0 }));
+  const route = [{ name: 'K1', z: K1.z, x: 20, y: 212 }, ...stakes, { name: 'K3', z: K3.z, x: 402, y: 246 }];
+  const rows: Project['level']['rows'] = [];
+  let i = 0;
+  const rd = (v: number) => Math.round((v + noise(0.0008)) * 1000) / 1000;
+  while (i < route.length - 1) {
+    // 這一站往前看到第 j 點為止，讀數都在 0.3 ~ 3.9 m 內
+    let j = i + 1;
+    while (j + 1 < route.length && j - i < 4) {
+      const span = route.slice(i, j + 2).map(q => q.z);
+      if (Math.max(...span) - Math.min(...span) > 3.4) break;
+      j++;
+    }
+    const span = route.slice(i, j + 1).map(q => q.z);
+    const hi = Math.max(...span) + 0.5;
+    if (i === 0) rows.push({ name: route[0].name, bs: rd(hi - route[0].z), is: null, fs: null, dist: null });
+    else rows[rows.length - 1].bs = rd(hi - route[i].z);
+    for (let k = i + 1; k <= j; k++) {
+      const q = route[k];
+      const d = round(Math.hypot(q.x - route[k - 1].x, q.y - route[k - 1].y), 1);
+      rows.push(k === j ? { name: q.name, bs: null, is: null, fs: rd(hi - q.z), dist: d } : { name: q.name, bs: null, is: rd(hi - q.z), fs: null, dist: d });
+    }
+    i = j;
+  }
+  p.level = { startZ: K1.z, endMode: 'known', endZ: K3.z, tolC: 20, rows };
+}
+
+function formatSta(m: number) {
+  const km = Math.floor(m / 1000 + 1e-9);
+  const rest = m - km * 1000;
+  return `${km}+${Math.abs(m % 1) > 1e-6 ? rest.toFixed(2).padStart(6, '0') : rest.toFixed(0).padStart(3, '0')}`;
 }
 
 function round(v: number, d = 3) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
