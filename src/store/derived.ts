@@ -10,7 +10,8 @@ import { runSam, samBreaklines, type SamResult } from '../core/sam';
 import { buildRoadway, type Roadway } from '../core/superelev';
 import { designSectionAdv, type StructSolid } from '../core/section-adv';
 
-export interface StakeRow { stake: Stake; ground: number | null; design: number | null; dh: number | null }
+/** side：落差構造物處的上游（up）／下游（down）斷面 */
+export interface StakeRow { stake: Stake; ground: number | null; design: number | null; dh: number | null; side?: 'up' | 'down' }
 export interface SectionRow { stake: Stake; result: SectionResult | null; reason?: string; solids?: StructSolid[]; errors?: string[] }
 
 /** 構造物數量：各材料逐樁面積與平均斷面法體積 */
@@ -78,12 +79,36 @@ export function groundLineOf(al: Alignment | null, g: GroundFn | null) {
 
 export function stakeRowsOf(al: Alignment | null, g: GroundFn | null, profile: Profile): StakeRow[] {
   if (!al) return [];
-  return al.stakes.map(stake => {
+  const drops = profile.drops.filter(d => d.sta >= al.startStation - 1e-6 && d.sta <= al.endStation + 1e-6);
+  const stakes: Array<{ stake: Stake; side?: 'up' | 'down' }> = al.stakes.filter(s => !drops.some(d => Math.abs(d.sta - s.sta) < 1e-4)).map(stake => ({ stake }));
+  // 落差處建立上游、下游兩個斷面樁
+  for (const d of drops) {
+    const q = al.pointAt(d.sta)!;
+    const base: Stake = { sta: d.sta, label: d.name, kind: 'extra', x: q.x, y: q.y, az: q.az };
+    stakes.push({ stake: { ...base, label: `${d.name}(上)` }, side: 'up' }, { stake: { ...base, label: `${d.name}(下)` }, side: 'down' });
+  }
+  stakes.sort((a, b) => a.stake.sta - b.stake.sta || (a.side === 'up' ? -1 : 1));
+  return stakes.map(({ stake, side }) => {
     const ground = g ? g(stake.sta, stake.x, stake.y) : null;
-    const design = profile.elevAt(stake.sta);
-    return { stake, ground, design, dh: ground !== null && design !== null ? ground - design : null };
+    const design = side === 'up' ? profile.elevBefore(stake.sta) : profile.elevAt(stake.sta);
+    return { stake, ground, design, dh: ground !== null && design !== null ? ground - design : null, side };
   });
 }
+
+/** 實際使用的縱坡交點：VIP 少於 2 個時改用單一坡度（起點設計高＋縱坡） */
+export function effectiveVpis(p: Pick<Project, 'vpis' | 'pfSimple'>, al: Alignment | null) {
+  if (p.vpis.length >= 2 || !al) return p.vpis;
+  const s0 = al.startStation, s1 = al.endStation;
+  return [{ sta: s0, z: p.pfSimple.z0, L: 0 }, { sta: s1, z: p.pfSimple.z0 + (p.pfSimple.slope / 100) * (s1 - s0), L: 0 }];
+}
+
+const tinOpts = (p: Project, breaklines: Pt3[][]) => ({
+  maxEdge: p.tin.maxEdge,
+  boundary: p.tin.useBoundary ? p.boundary : null,
+  breaklines,
+  peel: p.tin.hideSliver ? { maxEdge: p.tin.maxEdge, minAngle: p.tin.minAngle } : null,
+  flips: p.tin.flips ?? [],
+});
 
 export function sectionsOf(al: Alignment | null, rows: StakeRow[], tin: Tin | null, p: Pick<Project, 'sectionSample' | 'template' | 'advanced'>, roadway: Roadway | null = null): SectionRow[] {
   if (!al) return [];
@@ -136,10 +161,10 @@ export function volumesOf(sections: SectionRow[]) {
 export function computeDerived(p: Project): Derived {
   const valid = validPoints(p);
   const sam = samOf(p);
-  const tin = buildTin(valid, { maxEdge: p.tin.maxEdge, boundary: p.tin.useBoundary ? p.boundary : null, breaklines: breaklinesOf(p, sam) });
+  const tin = buildTin(valid, tinOpts(p, breaklinesOf(p, sam)));
   const contours = tin ? traceContours(tin, p.contour.interval, p.contour.majorEvery) : [];
   const alignment = p.alignment ? buildAlignment(p.alignment) : null;
-  const profile = buildProfile(p.vpis);
+  const profile = buildProfile(effectiveVpis(p, alignment), p.drops);
   const g = groundFnOf(tin, p.profileGround);
   const stakeRows = stakeRowsOf(alignment, g, profile);
   const roadway = buildRoadway(alignment, p.roadway);
@@ -155,10 +180,10 @@ export function useDerived(p: Project): Derived {
   const valid = useMemo(() => validPoints(p), [p.points, p.zRule]); // eslint-disable-line react-hooks/exhaustive-deps
   const sam = useMemo(() => samOf(p), [p.points, p.zRule, p.legend, p.sam]); // eslint-disable-line react-hooks/exhaustive-deps
   const breaklines = useMemo(() => breaklinesOf(p, sam), [p.legend, p.sam, sam]); // eslint-disable-line react-hooks/exhaustive-deps
-  const tin = useMemo(() => buildTin(valid, { maxEdge: p.tin.maxEdge, boundary: p.tin.useBoundary ? p.boundary : null, breaklines }), [valid, p.tin, p.boundary, breaklines]);
+  const tin = useMemo(() => buildTin(valid, tinOpts(p, breaklines)), [valid, p.tin, p.boundary, breaklines]); // eslint-disable-line react-hooks/exhaustive-deps
   const contours = useMemo(() => (tin ? traceContours(tin, p.contour.interval, p.contour.majorEvery) : []), [tin, p.contour.interval, p.contour.majorEvery]);
   const alignment = useMemo(() => (p.alignment ? buildAlignment(p.alignment) : null), [p.alignment]);
-  const profile = useMemo(() => buildProfile(p.vpis), [p.vpis]);
+  const profile = useMemo(() => buildProfile(effectiveVpis(p, alignment), p.drops), [p.vpis, p.pfSimple, p.drops, alignment]); // eslint-disable-line react-hooks/exhaustive-deps
   const g = useMemo(() => groundFnOf(tin, p.profileGround), [tin, p.profileGround]);
   const groundLine = useMemo(() => groundLineOf(alignment, g), [alignment, g]);
   const stakeRows = useMemo(() => stakeRowsOf(alignment, g, profile), [alignment, g, profile]);

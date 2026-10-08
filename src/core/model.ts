@@ -1,7 +1,7 @@
 // 專案資料模型（存檔格式）
 import type { XY } from './geom';
 import type { AlignmentInput } from './alignment';
-import type { VPI } from './profile';
+import type { VPI, Drop, OtherLine } from './profile';
 import type { SectionTemplate } from './section';
 import type { ControlPoint, Station } from './survey';
 import type { TraverseInput } from './traverse';
@@ -38,11 +38,13 @@ export interface Project {
   zRule: ZRule;
   /** 三角網外邊界（也作為方格法計算範圍） */
   boundary: XY[] | null;
-  tin: { maxEdge: number; useBoundary: boolean };
+  /** hideSliver：由外圍往內剝除過長邊（maxEdge）與銳角（minAngle）三角形 */
+  tin: { maxEdge: number; useBoundary: boolean; hideSliver: boolean; minAngle: number; flips: Array<[number, number, number, number]> };
   contour: { interval: number; majorEvery: number; labels: boolean };
   grid: {
     cell: number;
-    designMode: 'flat' | 'slope';
+    /** flat 水平面、slope 單向斜面、profile 依中心線縱斷設計高 */
+    designMode: 'flat' | 'slope' | 'profile';
     designZ: number;
     slopePct: number;
     slopeAzDeg: number;
@@ -73,7 +75,46 @@ export interface Project {
   roadway: RoadwaySettings;
   /** 進階組合斷面（構造物單元＋條件＋運算式） */
   advanced: AdvancedTemplate;
+  // ---- v2.0（v3.4 介面）----
+  /** 防砂壩／固床工等垂直落差 */
+  drops: Drop[];
+  /** 單一坡度模式（VIP 少於 2 個時）：起點設計高與縱坡 % */
+  pfSimple: { z0: number; slope: number };
+  /** 縱斷面圖面設定、規範等級、其他設計線、備註 */
+  pf: ProfileDisplay;
+  /** 匯入 DXF 的彩色線條底圖 */
+  backdrop: BackdropItem[] | null;
 }
+
+export interface ProfileDisplay {
+  title: string;
+  /** 垂直誇大倍率，0 = 自動填滿 */
+  vEx: number;
+  slopeFmt: 'pct' | 'ratio' | 'deg';
+  showA: boolean;
+  showField: boolean;
+  fieldOff: number;
+  leaderH: number;
+  speed: number;
+  rows: string[];
+  /** 備註：每行「樁號, 文字」 */
+  notes: string;
+  /** 區間備註：每行「起樁號, 迄樁號, 文字」 */
+  ranges: string;
+  lines: OtherLine[];
+}
+
+export interface BackdropItem { c: string; pts: number[]; closed: boolean }
+
+export const PF_ROWS: Array<[string, string]> = [
+  ['name', '點名 / 曲線樁'], ['sta', '縱斷面里程'], ['dist', '單距'], ['ground', '原地面高程'], ['design', '中心設計高程'], ['cutfill', '中心挖填高'],
+  ['cut', '挖深'], ['fill', '填高'], ['lt', '左田高'], ['rt', '右田高'], ['grade', '設計縱坡度'], ['note', '備註'],
+];
+
+export const DEFAULT_PF: ProfileDisplay = {
+  title: '縱斷面圖', vEx: 0, slopeFmt: 'pct', showA: true, showField: false, fieldOff: 6, leaderH: 0, speed: 40,
+  rows: ['name', 'sta', 'ground', 'design', 'cutfill', 'grade'], notes: '', ranges: '', lines: [],
+};
 
 export function isValidZ(z: number | null | undefined, rule: ZRule): z is number {
   if (z === null || z === undefined || !isFinite(z)) return false;
@@ -99,7 +140,7 @@ export function newProject(name = '未命名工程'): Project {
     points: [],
     zRule: { zeroIsNull: true, minZ: -500, maxZ: 9000 },
     boundary: null,
-    tin: { maxEdge: 0, useBoundary: true },
+    tin: { maxEdge: 45, useBoundary: true, hideSliver: true, minAngle: 8, flips: [] },
     contour: { interval: 1, majorEvery: 5, labels: true },
     grid: { cell: 10, designMode: 'flat', designZ: 0, slopePct: 0, slopeAzDeg: 0 },
     alignment: null,
@@ -116,6 +157,10 @@ export function newProject(name = '未命名工程'): Project {
     sam: { enabled: true, useBreaklines: true },
     roadway: { ...DEFAULT_ROADWAY },
     advanced: { ...DEFAULT_ADVANCED, items: DEFAULT_ADVANCED.items.map(i => ({ ...i })) },
+    drops: [],
+    pfSimple: { z0: 100, slope: -1.5 },
+    pf: { ...DEFAULT_PF, rows: [...DEFAULT_PF.rows] },
+    backdrop: null,
   };
 }
 
@@ -145,5 +190,9 @@ export function normalizeProject(p: Partial<Project>): Project {
     sam: { ...base.sam, ...p.sam },
     roadway: { ...base.roadway, ...p.roadway },
     advanced: { ...base.advanced, ...p.advanced },
+    drops: p.drops ?? [],
+    pfSimple: { ...base.pfSimple, ...p.pfSimple },
+    pf: { ...base.pf, ...p.pf },
+    backdrop: p.backdrop ?? null,
   } as Project;
 }

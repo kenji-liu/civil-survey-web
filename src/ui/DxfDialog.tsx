@@ -10,11 +10,14 @@ export function DxfDialog(props: {
   data: DxfData;
   zRule: ZRule;
   onCancel(): void;
-  onImport(points: ReturnType<typeof dxfToPoints>['points']): void;
+  init?: { densify: number; removeOutliers: boolean; keepBackdrop: boolean };
+  /** backdropLayers：要保留成彩色底圖的圖層（null = 不保留） */
+  onImport(points: ReturnType<typeof dxfToPoints>['points'], backdropLayers: Set<string> | null): void;
 }) {
   const layerList = useMemo(() => [...props.data.layers.entries()].sort((a, b) => b[1] - a[1]), [props.data]);
   const [sel, setSel] = useState<Set<string>>(() => new Set(layerList.map(l => l[0])));
-  const [o, setO] = useState({ usePoints: true, useText: true, usePolylines: true, densify: 5, minDist: 0.5, textRadius: 3, removeOutliers: true });
+  const [o, setO] = useState({ usePoints: true, useText: true, usePolylines: true, densify: props.init?.densify ?? 5, minDist: 0.5, textRadius: 3, removeOutliers: props.init?.removeOutliers ?? true });
+  const [keepBd, setKeepBd] = useState(props.init?.keepBackdrop ?? true);
   const opts: DxfImportOptions = { ...o, layers: sel, zRule: props.zRule };
   const rep = useMemo(() => dxfToPoints(props.data, opts), [props.data, sel, o, props.zRule]); // eslint-disable-line react-hooks/exhaustive-deps
   const zr = rep.points.reduce((a, p) => (p.z === null ? a : [Math.min(a[0], p.z), Math.max(a[1], p.z)]), [Infinity, -Infinity]);
@@ -64,6 +67,7 @@ export function DxfDialog(props: {
             <NumField id="dx-min" label="重複點濾除距離" value={o.minDist} unit="m" min={0} onChange={v => setO({ ...o, minDist: v })} />
             <NumField id="dx-tr" label="高程文字配對半徑" value={o.textRadius} unit="m" min={0} onChange={v => setO({ ...o, textRadius: v })} />
             <Check id="dx-out" label="剔除 (0,0) 與遠離地形的飛點" checked={o.removeOutliers} onChange={v => setO({ ...o, removeOutliers: v })} />
+            <Check id="dx-bd" label="保留勾選圖層的線條當彩色底圖" checked={keepBd} onChange={setKeepBd} />
             <h3>預覽</h3>
             <table className="tbl compact">
               <tbody>
@@ -83,7 +87,7 @@ export function DxfDialog(props: {
         </div>
         <footer className="modal-foot">
           <Btn kind="ghost" onClick={props.onCancel}>取消</Btn>
-          <Btn kind="primary" disabled={!rep.points.length} onClick={() => props.onImport(rep.points)}>匯入 {rep.points.length} 點</Btn>
+          <Btn kind="primary" disabled={!rep.points.length} onClick={() => props.onImport(rep.points, keepBd ? sel : null)}>匯入 {rep.points.length} 點</Btn>
         </footer>
       </div>
     </div>

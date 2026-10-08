@@ -12,6 +12,10 @@ export interface TinOptions {
   boundary?: XY[] | null;
   /** 斷線（地形線）：三角形邊不得跨越 */
   breaklines?: Pt3[][];
+  /** 由外圍往內剝除：邊長超過 maxEdge 或最小內角小於 minAngle（度）的外圍三角形。設定此項時 maxEdge 只用於剝除 */
+  peel?: { maxEdge: number; minAngle: number } | null;
+  /** 手動翻轉的共邊（兩端點座標 x1,y1,x2,y2）：建網後依序翻轉 */
+  flips?: Array<[number, number, number, number]>;
 }
 
 export interface Tin {
@@ -80,7 +84,7 @@ export function buildTin(points: Pt3[], opts: TinOptions = {}): Tin | null {
   } else {
     try { triangles = new Delaunator(coords).triangles; } catch { return null; }
   }
-  const maxE2 = opts.maxEdge && opts.maxEdge > 0 ? opts.maxEdge * opts.maxEdge : Infinity;
+  const maxE2 = !opts.peel && opts.maxEdge && opts.maxEdge > 0 ? opts.maxEdge * opts.maxEdge : Infinity;
   const boundary = opts.boundary && opts.boundary.length >= 3 ? opts.boundary : null;
   const keep: number[] = [];
   const t = triangles;
@@ -95,7 +99,9 @@ export function buildTin(points: Pt3[], opts: TinOptions = {}): Tin | null {
     }
     keep.push(a, b, c);
   }
-  const tri = Uint32Array.from(keep);
+  let triList = opts.peel ? peelHull(keep, xs, ys, opts.peel.maxEdge, opts.peel.minAngle) : keep;
+  if (opts.flips?.length) triList = applyFlips(triList, xs, ys, opts.flips, (x, y) => ptIndex.get(`${x.toFixed(4)},${y.toFixed(4)}`));
+  const tri = Uint32Array.from(triList);
   let minZ = Infinity, maxZ = -Infinity;
   for (let i = 0; i < tri.length; i++) {
     const z = zs[tri[i]];
@@ -107,6 +113,102 @@ export function buildTin(points: Pt3[], opts: TinOptions = {}): Tin | null {
     xs, ys, zs, tri, minZ, maxZ, nPts: n, nBreakEdges, warning,
     sample: (x, y) => sampleAt(xs, ys, zs, tri, index, x, y),
   };
+}
+
+/**
+ * 由三角網外圍往內剝除不良三角形：在外圍（有一邊不與其他三角形共用）且
+ * 最長邊大於 maxEdge 或最小內角小於 minAngle 的三角形移除，直到外圍都合格。內部不會挖洞。
+ */
+function peelHull(tris: number[], xs: Float64Array, ys: Float64Array, maxEdge: number, minAngleDeg: number): number[] {
+  const n = tris.length / 3;
+  if (!n) return tris;
+  const alive = new Uint8Array(n).fill(1);
+  const nV = xs.length;
+  const key = (a: number, b: number) => (a < b ? a * nV + b : b * nV + a);
+  const edgeTris = new Map<number, number[]>();
+  for (let t = 0; t < n; t++) for (let e = 0; e < 3; e++) {
+    const k = key(tris[3 * t + e], tris[3 * t + ((e + 1) % 3)]);
+    (edgeTris.get(k) ?? edgeTris.set(k, []).get(k)!).push(t);
+  }
+  const maxE2 = maxEdge > 0 ? maxEdge * maxEdge : Infinity;
+  const cosMin = Math.cos((Math.max(0, minAngleDeg) * Math.PI) / 180);
+  const bad = (t: number) => {
+    const v = [tris[3 * t], tris[3 * t + 1], tris[3 * t + 2]];
+    const L = [e2(xs, ys, v[1], v[2]), e2(xs, ys, v[0], v[2]), e2(xs, ys, v[0], v[1])];
+    if (Math.max(...L) > maxE2) return true;
+    if (minAngleDeg <= 0) return false;
+    // 餘弦定理求各角；最小角對應最短邊
+    for (let i = 0; i < 3; i++) {
+      const a2 = L[i], b2 = L[(i + 1) % 3], c2 = L[(i + 2) % 3];
+      const cosA = (b2 + c2 - a2) / (2 * Math.sqrt(b2 * c2) || 1);
+      if (cosA > cosMin) return true;
+    }
+    return false;
+  };
+  const onHull = (t: number) => {
+    for (let e = 0; e < 3; e++) {
+      const k = key(tris[3 * t + e], tris[3 * t + ((e + 1) % 3)]);
+      if ((edgeTris.get(k) ?? []).filter(o => alive[o]).length < 2) return true;
+    }
+    return false;
+  };
+  const queue: number[] = [];
+  for (let t = 0; t < n; t++) if (onHull(t)) queue.push(t);
+  while (queue.length) {
+    const t = queue.pop()!;
+    if (!alive[t] || !bad(t) || !onHull(t)) continue;
+    alive[t] = 0;
+    for (let e = 0; e < 3; e++) {
+      const k = key(tris[3 * t + e], tris[3 * t + ((e + 1) % 3)]);
+      for (const o of edgeTris.get(k) ?? []) if (alive[o]) queue.push(o);
+    }
+  }
+  const out: number[] = [];
+  for (let t = 0; t < n; t++) if (alive[t]) out.push(tris[3 * t], tris[3 * t + 1], tris[3 * t + 2]);
+  return out;
+}
+
+/** 翻轉共邊：兩個共用 a–b 邊的三角形 (a,b,c)(b,a,d)，在四邊形為凸時改成 c–d 對角線 */
+function applyFlips(tris: number[], xs: Float64Array, ys: Float64Array, flips: Array<[number, number, number, number]>, idx: (x: number, y: number) => number | undefined): number[] {
+  const t = tris.slice();
+  for (const [x1, y1, x2, y2] of flips) {
+    const a = idx(x1, y1), b = idx(x2, y2);
+    if (a === undefined || b === undefined) continue;
+    const owners: number[] = [];
+    for (let k = 0; k < t.length; k += 3) {
+      const v = [t[k], t[k + 1], t[k + 2]];
+      if (v.includes(a) && v.includes(b)) owners.push(k);
+    }
+    if (owners.length !== 2) continue;
+    const opp = owners.map(k => [t[k], t[k + 1], t[k + 2]].find(v => v !== a && v !== b)!);
+    const [c, d] = opp;
+    // 凸四邊形檢查：c、d 在 a–b 兩側，且 a、b 在 c–d 兩側
+    const side = (p: number, q: number, r: number) => (xs[q] - xs[p]) * (ys[r] - ys[p]) - (ys[q] - ys[p]) * (xs[r] - xs[p]);
+    if (side(a, b, c) * side(a, b, d) >= 0 || side(c, d, a) * side(c, d, b) >= 0) continue;
+    const orient = (p: number, q: number, r: number) => (side(p, q, r) > 0 ? [p, q, r] : [p, r, q]);
+    const t1 = orient(c, d, a), t2 = orient(c, d, b);
+    t.splice(owners[0], 3, ...t1);
+    t.splice(owners[1], 3, ...t2);
+  }
+  return t;
+}
+
+/** 找離 (x,y) 最近、且由兩個三角形共用的邊（翻網格工具用） */
+export function nearestSharedEdge(tin: Tin, x: number, y: number): [number, number, number, number] | null {
+  const { xs, ys, tri } = tin;
+  const count = new Map<string, number>();
+  const key = (a: number, b: number) => (a < b ? `${a},${b}` : `${b},${a}`);
+  for (let k = 0; k < tri.length; k += 3) for (let e = 0; e < 3; e++) { const kk = key(tri[k + e], tri[k + ((e + 1) % 3)]); count.set(kk, (count.get(kk) ?? 0) + 1); }
+  let best: [number, number] | null = null, bd = Infinity;
+  for (const [kk, n] of count) {
+    if (n !== 2) continue;
+    const [a, b] = kk.split(',').map(Number);
+    const dx = xs[b] - xs[a], dy = ys[b] - ys[a], L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - xs[a]) * dx + (y - ys[a]) * dy) / L2));
+    const d = Math.hypot(x - (xs[a] + t * dx), y - (ys[a] + t * dy));
+    if (d < bd) { bd = d; best = [a, b]; }
+  }
+  return best ? [xs[best[0]], ys[best[0]], xs[best[1]], ys[best[1]]] : null;
 }
 
 function e2(xs: Float64Array, ys: Float64Array, a: number, b: number) {

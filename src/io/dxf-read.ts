@@ -6,9 +6,9 @@ export interface P3 { x: number; y: number; z: number }
 
 export type DxfEntity =
   | { type: 'POINT'; layer: string; x: number; y: number; z: number }
-  | { type: 'INSERT'; layer: string; x: number; y: number; z: number; block: string; attribs: string[] }
+  | { type: 'INSERT'; layer: string; x: number; y: number; z: number; block: string; attribs: Array<{ tag: string; text: string }> }
   | { type: 'TEXT'; layer: string; x: number; y: number; z: number; text: string }
-  | { type: 'POLY'; layer: string; pts: P3[]; closed: boolean; src: string }
+  | { type: 'POLY'; layer: string; pts: P3[]; closed: boolean; src: string; color?: number }
   | { type: '3DFACE'; layer: string; pts: P3[] };
 
 export interface DxfData {
@@ -17,6 +17,8 @@ export interface DxfData {
   entities: DxfEntity[];
   /** 圖層 → 圖元數 */
   layers: Map<string, number>;
+  /** 圖層顏色（AutoCAD 色號 ACI） */
+  layerColors: Map<string, number>;
   /** 不處理的圖元種類 → 數量 */
   ignored: Map<string, number>;
 }
@@ -59,7 +61,19 @@ export function parseDxf(text: string, encoding = 'utf-8'): DxfData {
   for (let i = 0; i < pairs.length - 1; i++) {
     if (pairs[i][0] === 0 && pairs[i][1].trim() === 'SECTION' && pairs[i + 1][0] === 2 && pairs[i + 1][1].trim() === 'ENTITIES') { start = i + 2; break; }
   }
-  const data: DxfData = { version, encoding, entities: [], layers: new Map(), ignored: new Map() };
+  const data: DxfData = { version, encoding, entities: [], layers: new Map(), layerColors: new Map(), ignored: new Map() };
+  // 圖層表的顏色
+  for (let i = 0; i < pairs.length - 1; i++) {
+    if (pairs[i][0] === 0 && pairs[i][1].trim() === 'LAYER') {
+      let name = '', color = NaN;
+      for (let j = i + 1; j < pairs.length && pairs[j][0] !== 0; j++) {
+        if (pairs[j][0] === 2) name = pairs[j][1].trim();
+        else if (pairs[j][0] === 62) color = parseInt(pairs[j][1], 10);
+      }
+      if (name && isFinite(color)) data.layerColors.set(name, Math.abs(color));
+    }
+    if (pairs[i][0] === 2 && pairs[i][1].trim() === 'ENTITIES') break;
+  }
   if (start < 0) return data;
   // 切成一個個圖元（code 0 開頭）
   const ents: Array<{ type: string; g: Array<[number, string]> }> = [];
@@ -90,10 +104,10 @@ export function parseDxf(text: string, encoding = 'utf-8'): DxfData {
         add({ type: 'POINT', layer, x: num(g, 10), y: num(g, 20), z: num(g, 30, 0) });
         break;
       case 'INSERT': {
-        const attribs: string[] = [];
+        const attribs: Array<{ tag: string; text: string }> = [];
         const hasAttr = num(g, 66, 0) === 1;
         if (hasAttr) {
-          while (k + 1 < ents.length && ents[k + 1].type === 'ATTRIB') { attribs.push(cleanText(str(ents[k + 1].g, 1))); k++; }
+          while (k + 1 < ents.length && ents[k + 1].type === 'ATTRIB') { attribs.push({ tag: str(ents[k + 1].g, 2).toUpperCase(), text: cleanText(str(ents[k + 1].g, 1)) }); k++; }
           if (ents[k + 1]?.type === 'SEQEND') k++;
         }
         add({ type: 'INSERT', layer, x: num(g, 10), y: num(g, 20), z: num(g, 30, 0), block: str(g, 2), attribs });
@@ -111,7 +125,7 @@ export function parseDxf(text: string, encoding = 'utf-8'): DxfData {
           if (c === 10) x = parseFloat(v);
           else if (c === 20) pts.push({ x, y: parseFloat(v), z: elev });
         }
-        add({ type: 'POLY', layer, pts, closed: (num(g, 70, 0) & 1) === 1, src: 'LWPOLYLINE' });
+        add({ type: 'POLY', layer, pts, closed: (num(g, 70, 0) & 1) === 1, src: 'LWPOLYLINE', color: num(g, 62) });
         break;
       }
       case 'POLYLINE': {
@@ -128,11 +142,11 @@ export function parseDxf(text: string, encoding = 'utf-8'): DxfData {
         }
         if (ents[k + 1]?.type === 'SEQEND') k++;
         if (flags & 16) { ignore('POLYLINE(網格)'); break; }
-        add({ type: 'POLY', layer, pts, closed: (flags & 1) === 1, src: is3d ? '3D POLYLINE' : 'POLYLINE' });
+        add({ type: 'POLY', layer, pts, closed: (flags & 1) === 1, src: is3d ? '3D POLYLINE' : 'POLYLINE', color: num(g, 62) });
         break;
       }
       case 'LINE':
-        add({ type: 'POLY', layer, pts: [{ x: num(g, 10), y: num(g, 20), z: num(g, 30, 0) }, { x: num(g, 11), y: num(g, 21), z: num(g, 31, 0) }], closed: false, src: 'LINE' });
+        add({ type: 'POLY', layer, pts: [{ x: num(g, 10), y: num(g, 20), z: num(g, 30, 0) }, { x: num(g, 11), y: num(g, 21), z: num(g, 31, 0) }], closed: false, src: 'LINE', color: num(g, 62) });
         break;
       case '3DFACE': {
         const pts: P3[] = [];
@@ -203,16 +217,23 @@ export function dxfToPoints(data: DxfData, o: DxfImportOptions): DxfImportReport
   const zOk = (z: number) => isValidZ(z, o.zRule);
 
   // 1. 點與圖塊
-  const marks: Array<{ x: number; y: number; z: number | null; code: string }> = [];
+  const marks: Array<{ x: number; y: number; z: number | null; code: string; name?: string }> = [];
   if (o.usePoints) {
     for (const e of ents) {
       if (e.type === 'POINT' || e.type === 'INSERT') {
         if (!isFinite(e.x) || !isFinite(e.y)) continue;
         let z: number | null = zOk(e.z) ? e.z : null;
-        if (z === null && e.type === 'INSERT') {
-          for (const a of e.attribs) { const v = numberInText(a); if (v !== null && zOk(v)) { z = v; break; } }
+        let name: string | undefined, code = e.type === 'INSERT' ? e.block : e.layer;
+        if (e.type === 'INSERT') {
+          // 測量圖塊屬性：ELEV 高程、PNTS 點號、DESC 代碼（烏石坑等測量圖常見）
+          const tag = (...keys: string[]) => e.attribs.find(a => keys.includes(a.tag))?.text;
+          const elev = tag('ELEV', 'Z', 'H', 'HEIGHT', 'EL', '高程');
+          if (elev !== undefined) { const v = numberInText(elev); if (v !== null && zOk(v)) z = v; }
+          name = tag('PNTS', 'PNT', 'PT', 'NO', 'POINT', '點號') || undefined;
+          code = tag('DESC', 'CODE', '代碼') || code;
+          if (z === null) for (const a of e.attribs) { if (['PNTS', 'PNT', 'PT', 'NO', 'POINT'].includes(a.tag)) continue; const v = numberInText(a.text); if (v !== null && zOk(v)) { z = v; break; } }
         }
-        marks.push({ x: e.x, y: e.y, z, code: e.type === 'INSERT' ? e.block : e.layer });
+        marks.push({ x: e.x, y: e.y, z, code, name });
       }
     }
   }
@@ -235,7 +256,7 @@ export function dxfToPoints(data: DxfData, o: DxfImportOptions): DxfImportReport
       cand.push({ x: t.x, y: t.y, z: t.v, src: 'txt' });
     }
   }
-  for (const m of marks) cand.push({ x: m.x, y: m.y, z: m.z, code: m.code, src: 'pt' });
+  for (const m of marks) cand.push({ x: m.x, y: m.y, z: m.z, code: m.code, name: m.name, src: 'pt' });
   // 3. 等高線與 3D 線
   if (o.usePolylines) {
     for (const e of ents) {
@@ -292,7 +313,7 @@ export function dxfToPoints(data: DxfData, o: DxfImportOptions): DxfImportReport
   let n = 1;
   for (const p of list) {
     if (p.src === 'pt') rep.fromPoints++; else if (p.src === 'txt') rep.fromText++; else rep.fromLines++;
-    rep.points.push({ name: `D${n++}`, x: p.x, y: p.y, z: p.z, code: p.code });
+    rep.points.push({ name: p.name || `D${n}`, x: p.x, y: p.y, z: p.z, code: p.code }); n++;
   }
   return rep;
 }

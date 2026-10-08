@@ -22,9 +22,16 @@ export interface AlignmentInput {
   interval: number;
   /** 整樁距曲線樁小於此值則省略 */
   minGap: number;
-  /** 使用者自行加樁（里程） */
-  extraStations: number[];
+  /** 使用者自行加樁（里程與點名，如防砂壩）；舊專案只有里程數字 */
+  extraStations: Array<number | ExtraStation>;
+  /** 是否建立整樁、曲線樁（預設都建立） */
+  genFull?: boolean;
+  genCurve?: boolean;
 }
+
+export interface ExtraStation { sta: number; name: string }
+
+export const extraOf = (s: number | ExtraStation): ExtraStation => (typeof s === 'number' ? { sta: s, name: '加樁' } : s);
 
 export interface CurveData {
   ipIndex: number;
@@ -217,11 +224,12 @@ export function buildAlignment(input: AlignmentInput): Alignment | null {
 
 function buildStakes(al: Alignment): Stake[] {
   const { interval, minGap, extraStations } = al.input;
+  const genFull = al.input.genFull !== false, genCurve = al.input.genCurve !== false;
   const special: Array<{ sta: number; label: string; kind: Stake['kind'] }> = [
     { sta: al.startStation, label: 'BP', kind: 'BP' },
     { sta: al.endStation, label: 'EP', kind: 'EP' },
   ];
-  al.curves.forEach((c, k) => {
+  if (genCurve) al.curves.forEach((c, k) => {
     if (c.ls) {
       special.push({ sta: c.staTS, label: `TS${k + 1}`, kind: 'TS' });
       special.push({ sta: c.staBC, label: `SC${k + 1}`, kind: 'SC' });
@@ -236,15 +244,15 @@ function buildStakes(al: Alignment): Stake[] {
   });
   const list = [...special];
   const curveStas = special.filter(s => s.kind !== 'BP' && s.kind !== 'EP').map(s => s.sta);
-  if (interval > 0) {
+  if (genFull && interval > 0) {
     const first = Math.ceil((al.startStation + 1e-6) / interval) * interval;
     for (let s = first; s < al.endStation - 1e-6; s += interval) {
       if (curveStas.some(c => Math.abs(c - s) < minGap)) continue;
       list.push({ sta: s, label: '', kind: 'full' });
     }
   }
-  for (const s of extraStations) {
-    if (s > al.startStation && s < al.endStation) list.push({ sta: s, label: '加樁', kind: 'extra' });
+  for (const e of extraStations.map(extraOf)) {
+    if (e.sta > al.startStation && e.sta < al.endStation) list.push({ sta: e.sta, label: e.name || '加樁', kind: 'extra' });
   }
   list.sort((a, b) => a.sta - b.sta);
   const out: Stake[] = [];
@@ -258,6 +266,46 @@ function buildStakes(al: Alignment): Stake[] {
     out.push({ sta: it.sta, label: it.label, kind: it.kind, x: p.x, y: p.y, az: p.az });
   }
   return out;
+}
+
+/** 平面點投影到中心線：回傳最近的樁號與偏距（右側為正） */
+export function stationOf(al: Alignment, x: number, y: number): { sta: number; offset: number; dist: number } {
+  const n = Math.max(200, Math.ceil(al.length / 0.5));
+  let best = al.startStation, bd = Infinity;
+  for (let i = 0; i <= n; i++) {
+    const s = al.startStation + (al.length * i) / n;
+    const q = al.pointAt(s)!;
+    const d = (q.x - x) ** 2 + (q.y - y) ** 2;
+    if (d < bd) { bd = d; best = s; }
+  }
+  // 黃金分割細化
+  let lo = Math.max(al.startStation, best - al.length / n), hi = Math.min(al.endStation, best + al.length / n);
+  const f = (s: number) => { const q = al.pointAt(s)!; return (q.x - x) ** 2 + (q.y - y) ** 2; };
+  for (let k = 0; k < 40; k++) {
+    const m1 = lo + (hi - lo) * 0.382, m2 = lo + (hi - lo) * 0.618;
+    if (f(m1) < f(m2)) hi = m2; else lo = m1;
+  }
+  const sta = (lo + hi) / 2;
+  const q = al.pointAt(sta)!;
+  const rx = Math.cos(q.az), ry = -Math.sin(q.az); // 右側法向
+  return { sta, offset: (x - q.x) * rx + (y - q.y) * ry, dist: Math.sqrt(f(sta)) };
+}
+
+/** 曲線起訖點交換：IP 順序反轉，BP/EP 名稱對調 */
+export function reverseIPs(ips: IPInput[]): IPInput[] {
+  const r = [...ips].reverse().map(q => ({ ...q }));
+  if (r.length >= 2) {
+    const last = r.length - 1;
+    if (ips[last].name === 'EP') r[0].name = 'BP';
+    if (ips[0].name === 'BP') r[last].name = 'EP';
+    r[0].curve = null; r[last].curve = null;
+  }
+  return r;
+}
+
+/** 所有中間 IP 套用同一半徑（0 = 折點） */
+export function setAllRadius(ips: IPInput[], R: number): IPInput[] {
+  return ips.map((q, i) => (i === 0 || i === ips.length - 1 ? q : { ...q, curve: R > 0 ? { kind: 'R', value: R } : null }));
 }
 
 /**
